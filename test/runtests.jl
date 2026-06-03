@@ -194,6 +194,31 @@ const PT = ProbabilityTransports
         end
         @test meanres(0.0, 0.0) < 0.05      # γ=0 ⇒ ~uniform
         @test meanres(0.0, 3.0) > 0.9       # γ=3 ⇒ tightly concentrated
+
+        # multivariate: n independent directions (mirrors DiagonalVonMises)
+        μv = [0.0, π / 3, -π / 2]
+        γv = [2.0, 0.5, 3.0]
+        d = ProjectedNormal(μv, γv)
+        @test length(d) == 2length(μv)
+        # direction i occupies coords (2i-1, 2i); its mean angle is μᵢ
+        for i in eachindex(μv)
+            @test atan(mean(d)[2i], mean(d)[2i - 1]) ≈ μv[i]
+        end
+        for S in (StdNormal(), StdUniform(), StdFlat())
+            dto = transport_to(d, S)
+            @test dimension(dto) == 2length(μv)
+            y = S === StdFlat() ? randn(rng, length(d)) : rand(rng, dto)
+            x, lj = transport_and_logjac(dto, y)
+            if S !== StdFlat()
+                ref = S === StdNormal() ? StdNormal(length(d)) : StdUniform(length(d))
+                @test isapprox(logpdf_fwd(dto, y), logpdf(ref, y); atol = 1e-9)   # EXACT
+            end
+            @test pullback(dto, x) ≈ y
+        end
+        # product_distribution of scalar directions reconstructs the vector prior
+        pd = product_distribution([ProjectedNormal(μv[i], γv[i]) for i in eachindex(μv)])
+        @test length(pd) == length(d)
+        @test mean(pd) ≈ mean(d)
     end
 
     @testset "flat space (TransformVariables extension)" begin

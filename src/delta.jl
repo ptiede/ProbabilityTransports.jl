@@ -18,8 +18,12 @@ end
 Base.length(d::DeltaDist) = length(d.x0)
 Dists.insupport(::DeltaDist, x) = true
 Dists.mean(d::DeltaDist) = d.x0
-Dists.logpdf(d::DeltaDist, x) = zero(_ensure_float(eltype(d.x0)))
-Dists._logpdf(d::DeltaDist, ::AbstractVector) = zero(_ensure_float(eltype(d.x0)))
+# clamped value ⇒ density is 0 by convention. Specific signatures avoid ambiguity
+# with the Distributions fallbacks.
+_delta_zero(d::DeltaDist) = zero(_ensure_float(eltype(d.x0)))
+Dists.logpdf(d::DeltaDist, ::AbstractArray) = _delta_zero(d)
+Dists.logpdf(d::DeltaDist, ::Number) = _delta_zero(d)
+Dists._logpdf(d::DeltaDist, ::AbstractVector) = _delta_zero(d)
 Dists.rand(::AbstractRNG, d::DeltaDist) = d.x0
 
 # ----- transport: a 0-dimensional constant node ---------------------------

@@ -137,7 +137,7 @@ function transport_node(d::Dists.UnivariateDistribution, space)
 end
 
 function transport_step(c::ScalarTransport, y, index)
-    yi = y[index]
+    yi = _rgetindex(y, index)
     u = space_cdf(c.space, yi)
     x = quantile(c.dist, u)
     ℓ = space_logpdf(c.space, yi) - Dists.logpdf(c.dist, x)
@@ -146,7 +146,7 @@ end
 
 function pullback_step!(y, index, c::ScalarTransport, x::Real)
     u = cdf(c.dist, x)
-    y[index] = space_quantile(c.space, u)
+    _rsetindex!(y, space_quantile(c.space, u), index)
     return index + 1
 end
 

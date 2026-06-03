@@ -94,9 +94,9 @@ struct ScalarIdentity{S} <: AbstractTransport
 end
 dimension(::ScalarIdentity) = 1
 function transport_step(c::ScalarIdentity, y, index)
-    return y[index], zero(_ensure_float(eltype(y))), index + 1
+    return _rgetindex(y, index), zero(_ensure_float(eltype(y))), index + 1
 end
-pullback_step!(y, index, ::ScalarIdentity, z::Real) = (y[index] = z; index + 1)
+pullback_step!(y, index, ::ScalarIdentity, z::Real) = (_rsetindex!(y, z, index); index + 1)
 pullback_eltype(::ScalarIdentity, ::Type{T}) where {T} = _ensure_float(eltype(T))
 
 struct ArrayIdentity{S} <: AbstractTransport
@@ -113,9 +113,7 @@ function transport_step(c::ArrayIdentity, y, index)
 end
 function pullback_step!(y, index, c::ArrayIdentity, z)
     n = c.n
-    @inbounds for i in 1:n
-        y[index + i - 1] = z[i]
-    end
+    @views y[index:(index + n - 1)] .= vec(z)
     return index + n
 end
 pullback_eltype(::ArrayIdentity, ::Type{V}) where {V <: AbstractArray} = _ensure_float(eltype(V))
