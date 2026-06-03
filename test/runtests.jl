@@ -1,6 +1,372 @@
 using ProbabilityTransports
+using Distributions
+using Random
+using LinearAlgebra
+import TransformVariables as TV
 using Test
 
+const PT = ProbabilityTransports
+
 @testset "ProbabilityTransports.jl" begin
-    # Write your tests here.
+
+    @testset "Std distributions round-trip references" begin
+        cases = [
+            (StdNormal(), Normal(), 0.7),
+            (StdUniform(), Uniform(), 0.3),
+            (StdExponential(), Exponential(), 1.4),
+            (StdTDist(5.0), TDist(5.0), 0.9),
+            (StdInverseGamma(3.0), InverseGamma(3.0, 1.0), 0.8),
+        ]
+        for (std, ref, x) in cases
+            @test logpdf(std, x) ≈ logpdf(ref, x)
+            @test quantile(std, cdf(std, x)) ≈ x
+        end
+    end
+
+    @testset "scalar round-trip (transport ∘ pullback)" begin
+        rng = MersenneTwister(1)
+        for D in (Normal(2.0, 3.0), Gamma(2.0, 1.5), Exponential(1.3), Beta(2.0, 3.0))
+            for S in (StdNormal(), StdUniform())
+                dto = transport_to(D, S)
+                y = rand(rng, dto)
+                @test transport(dto, pullback(dto, transport(dto, y))) ≈ transport(dto, y)
+                @test pullback(dto, transport(dto, y)) ≈ y
+            end
+        end
+    end
+
+    @testset "equal-dim coincidence: logpdf_fwd == logpdf(StdNormal)" begin
+        rng = MersenneTwister(2)
+        for D in (Normal(1.0, 2.0), Gamma(2.7, 1.3), Exponential(0.8))
+            dto = transport_to(D, StdNormal())
+            y = randn(rng, dimension(dto))
+            @test logpdf_fwd(dto, y) ≈ logpdf(StdNormal(dimension(dto)), y)
+            @test logpdf(dto, y) ≈ logpdf(StdNormal(dimension(dto)), y)
+        end
+    end
+
+    @testset "StdUniform pullback density is flat (== 0)" begin
+        rng = MersenneTwister(3)
+        for D in (Gamma(2.0, 3.0), Beta(2.0, 2.0), product_distribution([Normal(), Gamma(2.0)]))
+            dto = transport_to(D, StdUniform())
+            u = rand(rng, dimension(dto))
+            @test isapprox(logpdf_fwd(dto, u), 0.0; atol = 1e-10)
+        end
+    end
+
+    @testset "Product" begin
+        rng = MersenneTwister(4)
+        P = product_distribution([Normal(), Gamma(2.0), Uniform()])
+        for S in (StdNormal(), StdUniform())
+            dto = transport_to(P, S)
+            @test dimension(dto) == 3
+            y = rand(rng, dto)
+            x = transport(dto, y)
+            @test pullback(dto, x) ≈ y
+        end
+    end
+
+    @testset "nested NamedDist / TupleDist (mixed shapes, both spaces)" begin
+        rng = MersenneTwister(5)
+        nd = NamedDist(a = Normal(), b = (Uniform(), Exponential()), c = Gamma(2.0))
+        for S in (StdNormal(), StdUniform())
+            dto = transport_to(nd, S)
+            @test dimension(dto) == 4
+            y = rand(rng, dto)
+            x = transport(dto, y)
+            @test x isa NamedTuple{(:a, :b, :c)}
+            @test pullback(dto, x) ≈ y
+        end
+        # coincidence under StdNormal
+        dto = transport_to(nd, StdNormal())
+        y = randn(rng, dimension(dto))
+        @test logpdf_fwd(dto, y) ≈ logpdf(StdNormal(dimension(dto)), y)
+    end
+
+    @testset "Affine / LocationScale pushforward" begin
+        rng = MersenneTwister(6)
+        D = 2.0 * Gamma(2.5, 1.3) + 1.0
+        @test D isa Distributions.AffineDistribution
+        dto = transport_to(D, StdNormal())
+        base = transport_to(Gamma(2.5, 1.3), StdNormal())
+        y = randn(rng, 1)
+        @test transport(dto, y) ≈ 1.0 + 2.0 * transport(base, y)
+        @test logpdf_fwd(dto, y) ≈ logpdf(StdNormal(1), y)
+        @test pullback(dto, transport(dto, y)) ≈ y
+    end
+
+    @testset "cheap scalar specializations (no erf/erfinv)" begin
+        rng = MersenneTwister(7)
+        dn = transport_to(Normal(3.0, 2.0), StdNormal())
+        y = randn(rng, 1)
+        @test transport(dn, y) ≈ 3.0 + 2.0 * y[1]
+        @test logpdf_fwd(dn, y) ≈ logpdf(StdNormal(1), y)
+        du = transport_to(Uniform(2.0, 5.0), StdUniform())
+        u = rand(rng, 1)
+        @test transport(du, u) ≈ 2.0 + 3.0 * u[1]
+        @test isapprox(logpdf_fwd(du, u), 0.0; atol = 1e-12)
+    end
+
+    @testset "MvNormal (affine / Cholesky) and DiagNormal" begin
+        rng = MersenneTwister(8)
+        Σ = [2.0 0.5; 0.5 1.0]
+        μ = [1.0, -1.0]
+        D = MvNormal(μ, Σ)
+        dto = transport_to(D, StdNormal())
+        @test dimension(dto) == 2
+        y = randn(rng, 2)
+        @test transport(dto, y) ≈ μ .+ cholesky(Σ).L * y
+        @test logpdf_fwd(dto, y) ≈ logpdf(StdNormal(2), y)   # confirms logdet(L) term
+        @test pullback(dto, transport(dto, y)) ≈ y
+        # generic space path
+        dtoU = transport_to(D, StdUniform())
+        u = rand(rng, 2)
+        @test isapprox(logpdf_fwd(dtoU, u), 0.0; atol = 1e-8)
+        @test pullback(dtoU, transport(dtoU, u)) ≈ u
+        # diagonal
+        Dd = MvNormal([0.5, 1.0, -2.0], Diagonal([1.0, 4.0, 0.25]))
+        dd = transport_to(Dd, StdNormal())
+        yd = randn(rng, 3)
+        @test logpdf_fwd(dd, yd) ≈ logpdf(StdNormal(3), yd)
+        @test pullback(dd, transport(dd, yd)) ≈ yd
+    end
+
+    @testset "Dirichlet (stick-breaking, dim K-1)" begin
+        rng = MersenneTwister(9)
+        for α in ([2.0, 3.0, 1.5], [1.0, 1.0, 1.0, 1.0], [0.7, 2.0])
+            D = Dirichlet(α)
+            K = length(α)
+            dn = transport_to(D, StdNormal())
+            @test dimension(dn) == K - 1
+            y = randn(rng, K - 1)
+            x = transport(dn, y)
+            @test sum(x) ≈ 1.0
+            @test all(x .>= -1e-12)
+            @test pullback(dn, x) ≈ y
+            @test logpdf_fwd(dn, y) ≈ logpdf(StdNormal(K - 1), y)
+            du = transport_to(D, StdUniform())
+            u = rand(rng, K - 1)
+            xu = transport(du, u)
+            @test sum(xu) ≈ 1.0
+            @test pullback(du, xu) ≈ u
+            @test isapprox(logpdf_fwd(du, u), 0.0; atol = 1e-8)
+        end
+    end
+
+    @testset "circular cannot be exactly transported to StdNormal/StdUniform" begin
+        # No measure-preserving map from a circle to the line → must error (not
+        # silently do a projected-normal embedding, which is a different distribution).
+        for S in (StdNormal(), StdUniform())
+            @test_throws ArgumentError transport_to(VonMises(0.0, 2.0), S)
+            @test_throws ArgumentError transport_to(DiagonalVonMises([0.0, 1.0], [2.0, 3.0]), S)
+            @test_throws ArgumentError transport_to(WrappedUniform(2π, 2), S)
+        end
+    end
+
+    @testset "ProjectedNormal: directional, transports EXACTLY" begin
+        rng = MersenneTwister(17)
+        @test ProjectedNormal([0.0, 2.0]).μ ≈ π / 2
+        @test ProjectedNormal([0.0, 2.0]).γ ≈ 2.0
+        for (μ, γ) in [(0.0, 3.0), (π / 3, 1.5), (0.0, 0.0)]
+            d = ProjectedNormal(μ, γ)
+            @test length(d) == 2
+            for S in (StdNormal(), StdUniform(), StdFlat())
+                dto = transport_to(d, S)
+                @test dimension(dto) == 2
+                y = S === StdFlat() ? randn(rng, 2) : rand(rng, dto)
+                x, lj = transport_and_logjac(dto, y)
+                if S !== StdFlat()
+                    ref = S === StdNormal() ? StdNormal(2) : StdUniform(2)
+                    @test isapprox(logpdf_fwd(dto, y), logpdf(ref, y); atol = 1e-9)   # EXACT
+                end
+                @test pullback(dto, x) ≈ y
+            end
+        end
+        # concentrates around μ as γ grows (von-Mises-like)
+        function meanres(μ, γ)
+            d = ProjectedNormal(μ, γ)
+            s = 0.0
+            for _ in 1:100_000
+                x = rand(rng, d)
+                s += cos(atan(x[2], x[1]) - μ)
+            end
+            s / 100_000
+        end
+        @test meanres(0.0, 0.0) < 0.05      # γ=0 ⇒ ~uniform
+        @test meanres(0.0, 3.0) > 0.9       # γ=3 ⇒ tightly concentrated
+    end
+
+    @testset "flat space (TransformVariables extension)" begin
+        rng = MersenneTwister(11)
+        # univariate: scalar TV transform, vector-in/scalar-out convention
+        for D in (Gamma(2.3, 1.1), Normal(1.0, 2.0), LogNormal(0.0, 1.0), Beta(2.0, 3.0))
+            dto = transport_to(D, StdFlat())
+            @test dimension(dto) == 1
+            y = randn(rng)
+            x_pt, lj = transport_and_logjac(dto, [y])
+            x_tv, lj_tv = TV.transform_and_logjac(TV.as(Real, support(D).lb, support(D).ub), y)
+            # flat: logpdf == logpdf_fwd == logpdf(D, x) + logjac
+            @test logpdf(dto, [y]) ≈ logpdf_fwd(dto, [y])
+            @test logpdf_fwd(dto, [y]) ≈ logpdf(D, x_pt) + lj
+            @test pullback(dto, x_pt) ≈ [y]
+        end
+        # multivariate: matches asflat shape; round-trips
+        for D in (MvNormal([1.0, -1.0], [2.0 0.5; 0.5 1.0]), Dirichlet([2.0, 3.0, 1.5]))
+            dto = transport_to(D, StdFlat())
+            y = randn(rng, dimension(dto))
+            x, lj = transport_and_logjac(dto, y)
+            @test logpdf(dto, y) ≈ logpdf_fwd(dto, y)
+            @test logpdf_fwd(dto, y) ≈ logpdf(D, x) + lj
+            @test pullback(dto, x) ≈ y
+        end
+        # nested NamedDist with a Dirichlet leaf
+        nd = NamedDist(a = Normal(), b = Gamma(2.0), c = Dirichlet([1.0, 2.0, 3.0]))
+        dto = transport_to(nd, StdFlat())
+        y = randn(rng, dimension(dto))
+        x = transport(dto, y)
+        @test x isa NamedTuple{(:a, :b, :c)}
+        @test logpdf(dto, y) ≈ logpdf_fwd(dto, y)
+        @test pullback(dto, x) ≈ y
+    end
+
+    @testset "affine by reuse: LocationScale over Std bases" begin
+        rng = MersenneTwister(12)
+        # `loc + scale*Std*()` builds a Distributions.AffineDistribution (LocationScale);
+        # PT transports it with no PT-specific affine type.
+        affine = [
+            (1.0 + 2.0 * StdNormal(), Normal(1.0, 2.0)),
+            (2.0 + 3.0 * StdUniform(), Uniform(2.0, 5.0)),
+            (2.0 * StdExponential(), Exponential(2.0)),
+        ]
+        for (d, refd) in affine
+            @test d isa Distributions.AffineDistribution
+            @test logpdf(d, 1.3) ≈ logpdf(refd, 1.3)
+        end
+        # transport over all three spaces; check internal consistency
+        for d in (1.0 + 2.0 * StdNormal(), 2.0 + 3.0 * StdUniform(), 2.0 * StdExponential(),
+                  1.0 + 2.0 * StdTDist(5.0), 3.0 * StdInverseGamma(2.5))
+            for S in (StdNormal(), StdUniform(), StdFlat())
+                dto = transport_to(d, S)
+                y = S === StdFlat() ? randn(rng, dimension(dto)) : rand(rng, dto)
+                x, lj = transport_and_logjac(dto, y)
+                @test logpdf_fwd(dto, y) ≈ logpdf(d, x) + lj
+                @test pullback(dto, x) ≈ y
+            end
+        end
+        # equal-dim coincidence over the Std spaces
+        d = 1.0 + 2.0 * StdNormal()
+        for S in (StdNormal(), StdUniform())
+            dto = transport_to(d, S)
+            y = rand(rng, dto)
+            ref = S === StdNormal() ? StdNormal(1) : StdUniform(1)
+            @test logpdf_fwd(dto, y) ≈ logpdf(ref, y)
+        end
+    end
+
+    @testset "array Std bases + ScaleShift transport are EXACT" begin
+        # exact transport ⇒ logpdf_fwd(y) ≡ logpdf(reference, y) (NOT the tautological
+        # logpdf_fwd == logpdf(d, x)+lj). Guards the scalar-over-array n·log|s| Jacobian
+        # and element-wise (vs matrix-product) scale.
+        rng = MersenneTwister(16)
+        for D in (StdNormal(3), StdNormal(2, 2), StdExponential(3), StdUniform(4))
+            for S in (StdNormal(), StdUniform())
+                dto = transport_to(D, S)
+                n = dimension(dto)
+                y = rand(rng, dto)
+                ref = S === StdNormal() ? StdNormal(n) : StdUniform(n)
+                @test logpdf_fwd(dto, y) ≈ logpdf(ref, y)   # exactness
+                @test pullback(dto, transport(dto, y)) ≈ y
+            end
+        end
+        # ScaleShift Jacobian: scalar s over an n-vector is n·log|s|; array is Σ log|sᵢ|
+        f = PT.ScaleShift(zeros(3), 2.0)
+        @test last(PT.with_logabsdet_jacobian(f, ones(3))) ≈ 3 * log(2)
+        g = PT.ScaleShift(zeros(3), [2.0, 3.0, 4.0])
+        @test last(PT.with_logabsdet_jacobian(g, ones(3))) ≈ log(2) + log(3) + log(4)
+    end
+
+    @testset "Truncated (Reactant-friendly), matches Distributions.truncated" begin
+        rng = MersenneTwister(13)
+        cases = [
+            (PT.Truncated(Normal(), -1.0, 2.0), truncated(Normal(), -1.0, 2.0)),
+            (PT.Truncated(Normal(); lower = 0.0), truncated(Normal(); lower = 0.0)),
+            (PT.Truncated(Normal(); upper = 1.0), truncated(Normal(); upper = 1.0)),
+            (PT.Truncated(Gamma(2.0, 1.5), 0.5, 4.0), truncated(Gamma(2.0, 1.5), 0.5, 4.0)),
+        ]
+        for (d, refd) in cases
+            for x in (0.3, 0.7)
+                insupport(refd, x) || continue
+                @test logpdf(d, x) ≈ logpdf(refd, x)
+                @test cdf(d, x) ≈ cdf(refd, x)
+            end
+            for p in (0.1, 0.5, 0.9)
+                @test cdf(d, quantile(d, p)) ≈ p
+            end
+        end
+        # transport over all three spaces (Truncated has quantile → generic scalar path)
+        d = PT.Truncated(Normal(), -1.0, 2.0)
+        for S in (StdNormal(), StdUniform(), StdFlat())
+            dto = transport_to(d, S)
+            y = S === StdFlat() ? randn(rng, dimension(dto)) : rand(rng, dto)
+            x, lj = transport_and_logjac(dto, y)
+            xv = x isa AbstractArray ? x[1] : x
+            @test -1.0 <= xv <= 2.0
+            @test logpdf_fwd(dto, y) ≈ logpdf(d, xv) + lj
+            @test pullback(dto, x) ≈ y
+        end
+    end
+
+    @testset "angular: DiagonalVonMises / WrappedUniform" begin
+        rng = MersenneTwister(14)
+        # logpdf matches a product of Distributions.VonMises
+        d = DiagonalVonMises([0.0, 1.0], [2.0, 3.0])
+        @test logpdf(d, [0.1, 0.9]) ≈ logpdf(VonMises(0.0, 2.0), 0.1) + logpdf(VonMises(1.0, 3.0), 0.9)
+        @test logpdf(DiagonalVonMises(0.5, 2.0), 0.3) ≈ logpdf(VonMises(0.5, 2.0), 0.3)
+
+        # StdFlat: AngleTransform per angle (2 reals -> 1 angle); section, not bijection
+        dto = transport_to(d, StdFlat())
+        @test dimension(dto) == 4
+        y = randn(rng, 4)
+        x, lj = transport_and_logjac(dto, y)
+        @test x isa AbstractVector && length(x) == 2 && all(-π .< x .<= π)
+        @test logpdf(dto, y) ≈ logpdf_fwd(dto, y)                 # flat: stop === nothing
+        @test logpdf_fwd(dto, y) ≈ logpdf(d, x) + lj
+        @test transport(dto, pullback(dto, x)) ≈ x               # section holds one-way
+
+        # StdNormal / StdUniform: no exact transport for a circular variable → error
+        @test_throws ArgumentError transport_to(d, StdNormal())
+        @test_throws ArgumentError transport_to(d, StdUniform())
+
+        # WrappedUniform flat
+        wu = WrappedUniform(2π, 3)
+        dtw = transport_to(wu, StdFlat())
+        @test dimension(dtw) == 6
+        yw = randn(rng, 6)
+        xw, ljw = transport_and_logjac(dtw, yw)
+        @test length(xw) == 3
+        @test logpdf_fwd(dtw, yw) ≈ logpdf(wu, xw) + ljw
+    end
+
+    @testset "DeltaDist (clamped parameter, 0-dim)" begin
+        rng = MersenneTwister(15)
+        # standalone: consumes no latent coordinates, always returns x0
+        for S in (StdNormal(), StdUniform(), StdFlat())
+            dto = transport_to(DeltaDist(5.0), S)
+            @test dimension(dto) == 0
+            @test transport(dto, Float64[]) == 5.0
+            @test isapprox(logpdf_fwd(dto, Float64[]), 0.0; atol = 1e-12)
+            @test length(pullback(dto, 5.0)) == 0
+        end
+        # inside a NamedDist: clamps that component, excluded from the latent dim
+        nd = NamedDist(a = Normal(), b = DeltaDist([1.0, 2.0]), c = Gamma(2.0))
+        for S in (StdNormal(), StdUniform())
+            dto = transport_to(nd, S)
+            @test dimension(dto) == 2
+            y = rand(rng, dto)
+            x = transport(dto, y)
+            @test x.b == [1.0, 2.0]
+            @test pullback(dto, x) ≈ y
+        end
+    end
+
 end
