@@ -17,14 +17,8 @@ struct ScaleShift{Tμ, Ts}
 end
 (f::ScaleShift)(z) = f.μ .+ f.s .* z
 
-struct InvScaleShift{Tμ, Ts}
-    μ::Tμ
-    s::Ts
-end
-(g::InvScaleShift)(x) = (x .- g.μ) ./ g.s
-
-InverseFunctions.inverse(f::ScaleShift) = InvScaleShift(f.μ, f.s)
-InverseFunctions.inverse(g::InvScaleShift) = ScaleShift(g.μ, g.s)
+# inverse of `x = μ .+ s .* z` is `z = (x .- μ) ./ s = (-μ./s) .+ (1 ./s) .* x`
+InverseFunctions.inverse(f::ScaleShift) = ScaleShift(-f.μ ./ f.s, inv.(f.s))
 
 _scaleshift_logabsdet(s::Number, z) = length(z) * log(abs(s))
 _scaleshift_logabsdet(s::AbstractArray, _) = sum(log ∘ abs, s)
@@ -98,22 +92,3 @@ function transport_step(c::ScalarIdentity, y, index)
 end
 pullback_step!(y, index, ::ScalarIdentity, z::Real) = (_rsetindex!(y, z, index); index + 1)
 pullback_eltype(::ScalarIdentity, ::Type{T}) where {T} = _ensure_float(eltype(T))
-
-struct ArrayIdentity{S} <: AbstractTransport
-    n::Int
-    space::S
-end
-dimension(c::ArrayIdentity) = c.n
-function transport_step(c::ArrayIdentity, y, index)
-    n = c.n
-    # a view is enough: the result is immediately consumed by the wrapping affine
-    # map (`μ .+ L*z`), so there is no need to copy.
-    z = @view y[index:(index + n - 1)]
-    return z, zero(_ensure_float(eltype(y))), index + n
-end
-function pullback_step!(y, index, c::ArrayIdentity, z)
-    n = c.n
-    @views y[index:(index + n - 1)] .= vec(z)
-    return index + n
-end
-pullback_eltype(::ArrayIdentity, ::Type{V}) where {V <: AbstractArray} = _ensure_float(eltype(V))

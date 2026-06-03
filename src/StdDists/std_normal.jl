@@ -9,6 +9,9 @@ struct StdNormal{T, N} <: Dists.ContinuousDistribution{Dists.ArrayLikeVariate{N}
 end
 StdNormal(d::Dims{N}) where {N} = StdNormal{Float64, N}(d)
 StdNormal(d::Int...) = StdNormal(d)
+# element-type-preserving constructors (used by `basemeasure`)
+StdNormal{T}(d::Dims{N}) where {T, N} = StdNormal{T, N}(d)
+StdNormal{T}(d::Int...) where {T} = StdNormal{T}(d)
 
 Base.size(d::StdNormal) = d.dims
 Base.length(d::StdNormal) = prod(d.dims)

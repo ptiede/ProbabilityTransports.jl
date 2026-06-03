@@ -4,6 +4,9 @@ end
 StdUniform(dims::Dims{N}) where {N} = StdUniform{Float64, N}(dims)
 StdUniform(dims::Int...) = StdUniform(dims)
 StdUniform() = StdUniform{Float64, 0}(())
+# element-type-preserving constructors (used by `basemeasure`)
+StdUniform{T}(dims::Dims{N}) where {T, N} = StdUniform{T, N}(dims)
+StdUniform{T}(dims::Int...) where {T} = StdUniform{T}(dims)
 
 Base.size(d::StdUniform) = d.dims
 Base.length(d::StdUniform) = prod(d.dims)

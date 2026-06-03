@@ -26,46 +26,16 @@ _chol_scale(Σ) = cholesky(Σ).L
 _chol_scale(Σ::PDMats.PDiagMat) = Diagonal(sqrt.(Σ.diag))
 _chol_scale(Σ::PDMats.ScalMat) = Diagonal(fill(sqrt(Σ.value), Σ.dim))
 
-# Cheap path: under StdNormal the iid-normal inner is the identity.
-function transport_node(d::Dists.MvNormal, space::StdNormal)
-    n = length(d)
-    return PushforwardTransport(AffineTransform(Vector(d.μ), _chol_scale(d.Σ)), ArrayIdentity(n, space))
-end
-
-# Inner node producing `n` iid standard normals from the latent space (via the
-# scalar quantile path). Used by the generic MvNormal builder; a dedicated node
-# avoids `product_distribution` collapsing iid Normals back into an MvNormal.
-struct IIDNormalInner{S} <: AbstractTransport
-    n::Int
-    space::S
-end
-dimension(c::IIDNormalInner) = c.n * space_dimension(typeof(c.space))
-
-function transport_step(c::IIDNormalInner, y, index)
-    T = _ensure_float(eltype(y))
-    out = Vector{T}(undef, c.n)
-    ℓ = zero(T)
-    nrm = Dists.Normal()
-    @inbounds for i in 1:(c.n)
-        zi, ℓi, index = transport_step(ScalarTransport(nrm, c.space), y, index)
-        out[i] = zi
-        ℓ += ℓi
-    end
-    return out, ℓ, index
-end
-function pullback_step!(y, index, c::IIDNormalInner, z)
-    nrm = Dists.Normal()
-    @inbounds for i in 1:(c.n)
-        index = pullback_step!(y, index, ScalarTransport(nrm, c.space), z[i])
-    end
-    return index
-end
-pullback_eltype(::IIDNormalInner, ::Type{V}) where {V <: AbstractArray} = _ensure_float(eltype(V))
-
-# Generic space: the inner draws iid standard normals via the quantile path.
+# `x = μ + L·z` with `L = chol(Σ)` and `z` a vector of `n` iid standard normals.
+# The inner that produces those `n` iid normals is just the array-`StdNormal`
+# base's own transport: the matching-base identity under `StdNormal`, and the
+# per-element `Φ⁻¹` quantile loop under any other space. (This is the same shape
+# VLBI's matrix-scale `AffineDistribution` uses.)
 function transport_node(d::Dists.MvNormal, space)
     n = length(d)
-    return PushforwardTransport(AffineTransform(Vector(d.μ), _chol_scale(d.Σ)), IIDNormalInner(n, space))
+    return PushforwardTransport(
+        AffineTransform(Vector(d.μ), _chol_scale(d.Σ)), transport_node(StdNormal(n), space)
+    )
 end
 
 # ----- Dirichlet: stick-breaking, dimension-reducing (K -> K-1) ------------

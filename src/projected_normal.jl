@@ -58,14 +58,11 @@ _ndir(d::ProjectedNormal) = length(d.ν) ÷ 2                    # number of dir
 Dists.mean(d::ProjectedNormal) = d.ν
 Dists.insupport(d::ProjectedNormal, x::AbstractVector) = length(x) == length(d)
 
-function Dists._logpdf(d::ProjectedNormal, x::AbstractVector)
+function Dists.logpdf(d::ProjectedNormal, x::AbstractVector)
     # vectorized (no scalar indexing) so it traces under Reactant
     T = float(eltype(d.ν))
     return -sum(abs2, x .- d.ν) / 2 - _ndir(d) * log(convert(T, 2π))
 end
-# Accept any `AbstractVector` (incl. Reactant traced arrays, whose eltype is not
-# `<:Real`) so `logpdf_fwd` traces.
-Dists.logpdf(d::ProjectedNormal, x::AbstractVector) = Dists._logpdf(d, x)
 
 function Dists._rand!(rng::AbstractRNG, d::ProjectedNormal, x::AbstractVector)
     randn!(rng, x)

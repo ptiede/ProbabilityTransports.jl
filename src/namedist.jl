@@ -64,12 +64,17 @@ end
 Dists.logpdf(::NamedDist{()}, ::NamedTuple{()}) = 0.0
 
 function Dists.rand(rng::AbstractRNG, d::NamedDist{N}) where {N}
-    return NamedTuple{N}(map(di -> rand(rng, di), getfield(d, :dists)))
+    rngF = Base.Fix1(rand, rng)
+    return NamedTuple{N}(map(rngF, getfield(d, :dists)))
 end
 
 # ----- build transport nodes from the named/tuple distributions -----------
 
 transport_node(d::TupleDist, space) = transport_node(getfield(d, :dists), space)
 function transport_node(d::NamedDist{N}, space) where {N}
-    return transport_node(NamedTuple{N}(getfield(d, :dists)), space)
+    # `dists` is a plain tuple (names live in the `N` type param); map the
+    # component nodes directly and re-attach the names — equivalent to, but
+    # without the round-trip through `transport_node(::NamedTuple, space)`.
+    nodes = map(x -> transport_node(x, space), getfield(d, :dists))
+    return TupleTransport(NamedTuple{N}(nodes), space)
 end

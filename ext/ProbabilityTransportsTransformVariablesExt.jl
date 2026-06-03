@@ -210,6 +210,6 @@ PT.transport_node(::PT.DiagonalVonMises{<:Real, <:Real, <:Real}, ::PT.StdFlat) =
 PT.transport_node(d::PT.WrappedUniform, ::PT.StdFlat) = as(Vector, AngleTransform(), length(d))
 PT.transport_node(::PT.WrappedUniform{<:Real}, ::PT.StdFlat) = AngleTransform()
 
-PT._reference(::PT.StdFlat, ::Int) = nothing
+PT.basemeasure(::PT.StdFlat, ::Int) = nothing
 
 end # module

@@ -20,13 +20,13 @@ instance of `StdNormal()`, `StdUniform()`, or `StdFlat()`) to `distribution`.
 function transport_to(dist, space)
     node = transport_node(dist, space)
     n = dimension(node)
-    stop = _reference(space, n)
+    stop = basemeasure(space, n)
     return TransportedDistribution(node, dist, stop)
 end
 
 # latent reference of the correct (flattened) dimension
-_reference(::StdNormal, n::Int) = StdNormal(n)
-_reference(::StdUniform, n::Int) = StdUniform(n)
+basemeasure(::StdNormal{T}, n::Int) where {T} = StdNormal{T}(n)
+basemeasure(::StdUniform{T}, n::Int) where {T} = StdUniform{T}(n)
 
 transport(d::TransportedDistribution) = getfield(d, :transport)
 Base.length(d::TransportedDistribution) = dimension(getfield(d, :transport))
