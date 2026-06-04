@@ -72,10 +72,12 @@ dimension(c::PushforwardTransport) = dimension(c.inner)   # invertible f ⇒ equ
 space(c::PushforwardTransport) = space(c.inner)
 
 function transport_step(c::PushforwardTransport, y, index)
-    z, ℓi, index′ = transport_step(c.inner, y, index)
-    x, ℓf = with_logabsdet_jacobian(c.f, z)
-    return x, ℓi + ℓf, index′
+    z, index′ = transport_step(c.inner, y, index)
+    return c.f(z), index′
 end
+
+# (Under `StdFlat`, a pushforward is a TV `PushforwardTransform` — see the TV extension
+# — so this core node only serves the Jacobian-free Std spaces.)
 
 function pullback_step!(y, index, c::PushforwardTransport, x)
     z = inverse(c.f)(x)
@@ -94,7 +96,7 @@ struct ScalarIdentity{S} <: AbstractTransport
 end
 dimension(::ScalarIdentity) = 1
 function transport_step(c::ScalarIdentity, y, index)
-    return _rgetindex(y, index), zero(_ensure_float(eltype(y))), index + 1
+    return _rgetindex(y, index), index + 1
 end
 pullback_step!(y, index, ::ScalarIdentity, z::Real) = (_rsetindex!(y, z, index); index + 1)
 pullback_eltype(::ScalarIdentity, ::Type{T}) where {T} = _ensure_float(eltype(T))

@@ -12,12 +12,21 @@ the original distribution's space. Always well defined.
 function transport end
 
 """
-    transport_and_logjac(c, y)
+    transport_and_logdensity(dto, y)
 
-Return `(x, logjac)` where `x = transport(c, y)` and `logjac` is the log absolute
-Jacobian determinant of the (bijective part of the) map at `y`.
+Return `(x, ℓ)` where `x = transport(dto, y)` is the target-space point and `ℓ` is the
+*pulled-back log density at `y`* — the prior's contribution to put a sampler on. This
+is the model-facing primitive: feed `x` to the rest of the generative model (the
+likelihood) and add `ℓ`. Dispatched on the latent space:
+
+  - Std spaces (`StdNormal`/`StdUniform`): `ℓ == logpdf(reference, y)`, the closed-form
+    reference density — **no Jacobian is computed**, because the transport is exact.
+  - `StdFlat`: `ℓ == logpdf(start, x) + logjac`, the genuine change of variables.
+
+Std-space methods live in `transported.jl`; the `StdFlat` method lives in the
+TransformVariables extension (where the whole flat tree is a single TV transform).
 """
-function transport_and_logjac end
+function transport_and_logdensity end
 
 """
     pullback(c, x)
@@ -38,12 +47,14 @@ original distribution's dimension).
 function dimension end
 
 """
-    transport_step(c, y, index) -> (value, logjac, index′)
+    transport_step(c, y, index) -> (value, index′)
 
 The composable, index-threaded core of a transport node. Consume the latent
-coordinates of `y` starting at `index`, returning the transported `value`, the log
-absolute Jacobian determinant `logjac`, and the next index `index′ = index +
-dimension(c)`. It always returns `logjac`; `transport` simply discards it.
+coordinates of `y` starting at `index`, returning the transported `value` and the next
+index `index′ = index + dimension(c)`. It carries **no Jacobian**: an exact transport to
+a Std space has pulled-back density equal to the closed-form reference, so the Jacobian
+is never needed there. The flat space does the genuine change of variables entirely in
+TransformVariables (every `StdFlat` node is a TV transform), so no core node forms one.
 
 This is the performance-critical extension point for defining a **new node type**
 (most extensions instead add [`transport_node`](@ref) methods or a `space_*` trait,
@@ -51,7 +62,7 @@ or wrap a bijection in a `PushforwardTransport`). To add a new `AbstractTranspor
 subtype implement, all index-threaded for zero-allocation composition:
 
   - `dimension(c)` — latent coordinates consumed
-  - `transport_step(c, y, index) -> (value, logjac, index′)`
+  - `transport_step(c, y, index) -> (value, index′)`
   - `pullback_step!(y, index, c, x) -> index′` — write the latent coords for `x`
   - `pullback_eltype(c, ::Type)` — element type for the pullback buffer
 """
@@ -95,12 +106,6 @@ function transport(c::AbstractTransport, y)
     return first(transport_step(c, y, firstindex(y)))
 end
 
-function transport_and_logjac(c::AbstractTransport, y)
-    @argcheck dimension(c) == length(y)
-    x, ℓ, _ = transport_step(c, y, firstindex(y))
-    return x, ℓ
-end
-
 function pullback(c::AbstractTransport, x)
     y = Vector{pullback_eltype(c, x)}(undef, dimension(c))
     pullback_step!(y, firstindex(y), c, x)
@@ -112,7 +117,6 @@ pullback_eltype(c::AbstractTransport, x) = pullback_eltype(c, typeof(x))
 # ----- scalar node: the universal unit-interval factoring ------------------
 #
 #   y --F_S--> u ∈ [0,1] --Q_D--> x
-#   logjac = logpdf_S(y) - logpdf_D(x)
 
 struct ScalarTransport{D, S} <: AbstractTransport
     dist::D
@@ -140,8 +144,7 @@ function transport_step(c::ScalarTransport, y, index)
     yi = _rgetindex(y, index)
     u = space_cdf(c.space, yi)
     x = quantile(c.dist, u)
-    ℓ = space_logpdf(c.space, yi) - Dists.logpdf(c.dist, x)
-    return x, ℓ, index + 1
+    return x, index + 1
 end
 
 function pullback_step!(y, index, c::ScalarTransport, x::Real)
@@ -175,13 +178,11 @@ function transport_step(c::ArrayTransport{<:Dists.Product}, y, index)
     comps = c.dist.v
     T = _ensure_float(eltype(y))
     out = Vector{T}(undef, length(comps))
-    ℓ = zero(T)
     @inbounds for i in eachindex(comps)
-        xi, ℓi, index = transport_step(ScalarTransport(comps[i], c.space), y, index)
+        xi, index = transport_step(ScalarTransport(comps[i], c.space), y, index)
         out[i] = xi
-        ℓ += ℓi
     end
-    return out, ℓ, index
+    return out, index
 end
 
 function pullback_step!(y, index, c::ArrayTransport{<:Dists.Product}, x)
@@ -207,10 +208,8 @@ dimension(::EmptyNamedTupleTransport) = 0
 transport_node(::Tuple{}, space) = EmptyTupleTransport(space)
 transport_node(::NamedTuple{()}, space) = EmptyNamedTupleTransport(space)
 
-transport_step(::EmptyTupleTransport, y, index) =
-    (), zero(_ensure_float(eltype(y))), index
-transport_step(::EmptyNamedTupleTransport, y, index) =
-    (;), zero(_ensure_float(eltype(y))), index
+transport_step(::EmptyTupleTransport, y, index) = (), index
+transport_step(::EmptyNamedTupleTransport, y, index) = (;), index
 pullback_step!(y, index, ::EmptyTupleTransport, ::Tuple{}) = index
 pullback_step!(y, index, ::EmptyNamedTupleTransport, ::NamedTuple{()}) = index
 

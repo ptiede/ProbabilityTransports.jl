@@ -7,6 +7,36 @@ using Test
 
 const PT = ProbabilityTransports
 
+# ---- independent exactness oracle ------------------------------------------
+# The package no longer computes a Jacobian for Std-space transports (logpdf_fwd ==
+# logpdf(reference) holds by construction), so `logpdf_fwd ≈ logpdf(reference)` would be
+# tautological. We instead reconstruct the pulled-back density with an INDEPENDENT
+# finite-difference Jacobian of the transport map: a wrong map fails
+#     logpdf(start, x) + logabsdet(∂x/∂y) ≈ logpdf_fwd(dto, y).
+# This works for any bijective (square) map and for the dimension-reducing
+# stick-breaking / simplex maps (K → K-1), which drop the redundant last coordinate.
+_flatten(x::Number) = [float(x)]
+_flatten(x::AbstractArray) = vec(collect(float.(x)))
+_flatten(x::Union{Tuple, NamedTuple}) =
+    isempty(x) ? Float64[] : reduce(vcat, map(_flatten, values(x)))
+
+function fd_logjac(dto, y)
+    f = yy -> _flatten(transport(dto, yy))
+    n = length(y)
+    g = length(f(y)) == n ? f : (yy -> f(yy)[1:n])   # dim-reducing: drop redundant coord
+    h = 1.0e-6
+    J = Matrix{Float64}(undef, n, n)
+    for j in 1:n
+        yp = collect(float.(y)); yp[j] += h
+        ym = collect(float.(y)); ym[j] -= h
+        J[:, j] .= (g(yp) .- g(ym)) ./ (2h)
+    end
+    return first(logabsdet(J))
+end
+
+# independent reconstruction of logpdf_fwd; compare to the package's value.
+fd_fwd(dto, start, y) = logpdf(start, transport(dto, y)) + fd_logjac(dto, y)
+
 @testset "ProbabilityTransports.jl" begin
 
     @testset "Std distributions round-trip references" begin
@@ -40,8 +70,9 @@ const PT = ProbabilityTransports
         for D in (Normal(1.0, 2.0), Gamma(2.7, 1.3), Exponential(0.8))
             dto = transport_to(D, StdNormal())
             y = randn(rng, dimension(dto))
-            @test logpdf_fwd(dto, y) ≈ logpdf(StdNormal(dimension(dto)), y)
+            # sampler targets the reference; exactness checked independently (FD)
             @test logpdf(dto, y) ≈ logpdf(StdNormal(dimension(dto)), y)
+            @test isapprox(fd_fwd(dto, D, y), logpdf_fwd(dto, y); atol = 1e-5)
         end
     end
 
@@ -51,6 +82,7 @@ const PT = ProbabilityTransports
             dto = transport_to(D, StdUniform())
             u = rand(rng, dimension(dto))
             @test isapprox(logpdf_fwd(dto, u), 0.0; atol = 1e-10)
+            @test isapprox(fd_fwd(dto, D, u), logpdf_fwd(dto, u); atol = 1e-5)   # exactness
         end
     end
 
@@ -80,7 +112,8 @@ const PT = ProbabilityTransports
         # coincidence under StdNormal
         dto = transport_to(nd, StdNormal())
         y = randn(rng, dimension(dto))
-        @test logpdf_fwd(dto, y) ≈ logpdf(StdNormal(dimension(dto)), y)
+        @test logpdf(dto, y) ≈ logpdf(StdNormal(dimension(dto)), y)
+        @test isapprox(fd_fwd(dto, nd, y), logpdf_fwd(dto, y); atol = 1e-5)
     end
 
     @testset "Affine / LocationScale pushforward" begin
@@ -91,20 +124,23 @@ const PT = ProbabilityTransports
         base = transport_to(Gamma(2.5, 1.3), StdNormal())
         y = randn(rng, 1)
         @test transport(dto, y) ≈ 1.0 + 2.0 * transport(base, y)
-        @test logpdf_fwd(dto, y) ≈ logpdf(StdNormal(1), y)
+        @test isapprox(fd_fwd(dto, D, y), logpdf_fwd(dto, y); atol = 1e-5)
         @test pullback(dto, transport(dto, y)) ≈ y
     end
 
     @testset "cheap scalar specializations (no erf/erfinv)" begin
         rng = MersenneTwister(7)
-        dn = transport_to(Normal(3.0, 2.0), StdNormal())
+        Dn = Normal(3.0, 2.0)
+        dn = transport_to(Dn, StdNormal())
         y = randn(rng, 1)
         @test transport(dn, y) ≈ 3.0 + 2.0 * y[1]
-        @test logpdf_fwd(dn, y) ≈ logpdf(StdNormal(1), y)
-        du = transport_to(Uniform(2.0, 5.0), StdUniform())
+        @test isapprox(fd_fwd(dn, Dn, y), logpdf_fwd(dn, y); atol = 1e-5)
+        Du = Uniform(2.0, 5.0)
+        du = transport_to(Du, StdUniform())
         u = rand(rng, 1)
         @test transport(du, u) ≈ 2.0 + 3.0 * u[1]
         @test isapprox(logpdf_fwd(du, u), 0.0; atol = 1e-12)
+        @test isapprox(fd_fwd(du, Du, u), logpdf_fwd(du, u); atol = 1e-5)
     end
 
     @testset "MvNormal (affine / Cholesky) and DiagNormal" begin
@@ -116,18 +152,19 @@ const PT = ProbabilityTransports
         @test dimension(dto) == 2
         y = randn(rng, 2)
         @test transport(dto, y) ≈ μ .+ cholesky(Σ).L * y
-        @test logpdf_fwd(dto, y) ≈ logpdf(StdNormal(2), y)   # confirms logdet(L) term
+        @test isapprox(fd_fwd(dto, D, y), logpdf_fwd(dto, y); atol = 1e-5)   # logdet(L) term
         @test pullback(dto, transport(dto, y)) ≈ y
         # generic space path
         dtoU = transport_to(D, StdUniform())
         u = rand(rng, 2)
         @test isapprox(logpdf_fwd(dtoU, u), 0.0; atol = 1e-8)
+        @test isapprox(fd_fwd(dtoU, D, u), logpdf_fwd(dtoU, u); atol = 1e-5)
         @test pullback(dtoU, transport(dtoU, u)) ≈ u
         # diagonal
         Dd = MvNormal([0.5, 1.0, -2.0], Diagonal([1.0, 4.0, 0.25]))
         dd = transport_to(Dd, StdNormal())
         yd = randn(rng, 3)
-        @test logpdf_fwd(dd, yd) ≈ logpdf(StdNormal(3), yd)
+        @test isapprox(fd_fwd(dd, Dd, yd), logpdf_fwd(dd, yd); atol = 1e-5)
         @test pullback(dd, transport(dd, yd)) ≈ yd
     end
 
@@ -143,13 +180,14 @@ const PT = ProbabilityTransports
             @test sum(x) ≈ 1.0
             @test all(x .>= -1e-12)
             @test pullback(dn, x) ≈ y
-            @test logpdf_fwd(dn, y) ≈ logpdf(StdNormal(K - 1), y)
+            @test isapprox(fd_fwd(dn, D, y), logpdf_fwd(dn, y); atol = 1e-5)   # dim-reducing
             du = transport_to(D, StdUniform())
             u = rand(rng, K - 1)
             xu = transport(du, u)
             @test sum(xu) ≈ 1.0
             @test pullback(du, xu) ≈ u
             @test isapprox(logpdf_fwd(du, u), 0.0; atol = 1e-8)
+            @test isapprox(fd_fwd(du, D, u), logpdf_fwd(du, u); atol = 1e-5)
         end
     end
 
@@ -174,10 +212,9 @@ const PT = ProbabilityTransports
                 dto = transport_to(d, S)
                 @test dimension(dto) == 2
                 y = S === StdFlat() ? randn(rng, 2) : rand(rng, dto)
-                x, lj = transport_and_logjac(dto, y)
+                x = transport(dto, y)
                 if S !== StdFlat()
-                    ref = S === StdNormal() ? StdNormal(2) : StdUniform(2)
-                    @test isapprox(logpdf_fwd(dto, y), logpdf(ref, y); atol = 1e-9)   # EXACT
+                    @test isapprox(fd_fwd(dto, d, y), logpdf_fwd(dto, y); atol = 1e-5)   # EXACT
                 end
                 @test pullback(dto, x) ≈ y
             end
@@ -208,10 +245,9 @@ const PT = ProbabilityTransports
             dto = transport_to(d, S)
             @test dimension(dto) == 2length(μv)
             y = S === StdFlat() ? randn(rng, length(d)) : rand(rng, dto)
-            x, lj = transport_and_logjac(dto, y)
+            x = transport(dto, y)
             if S !== StdFlat()
-                ref = S === StdNormal() ? StdNormal(length(d)) : StdUniform(length(d))
-                @test isapprox(logpdf_fwd(dto, y), logpdf(ref, y); atol = 1e-9)   # EXACT
+                @test isapprox(fd_fwd(dto, d, y), logpdf_fwd(dto, y); atol = 1e-5)   # EXACT
             end
             @test pullback(dto, x) ≈ y
         end
@@ -228,20 +264,18 @@ const PT = ProbabilityTransports
             dto = transport_to(D, StdFlat())
             @test dimension(dto) == 1
             y = randn(rng)
-            x_pt, lj = transport_and_logjac(dto, [y])
-            x_tv, lj_tv = TV.transform_and_logjac(TV.as(Real, support(D).lb, support(D).ub), y)
-            # flat: logpdf == logpdf_fwd == logpdf(D, x) + logjac
-            @test logpdf(dto, [y]) ≈ logpdf_fwd(dto, [y])
-            @test logpdf_fwd(dto, [y]) ≈ logpdf(D, x_pt) + lj
+            x_pt = transport(dto, [y])
+            @test logpdf(dto, [y]) ≈ logpdf_fwd(dto, [y])               # flat coincidence
+            @test isapprox(fd_fwd(dto, D, [y]), logpdf_fwd(dto, [y]); atol = 1e-5)  # exact density
             @test pullback(dto, x_pt) ≈ [y]
         end
         # multivariate: matches asflat shape; round-trips
         for D in (MvNormal([1.0, -1.0], [2.0 0.5; 0.5 1.0]), Dirichlet([2.0, 3.0, 1.5]))
             dto = transport_to(D, StdFlat())
             y = randn(rng, dimension(dto))
-            x, lj = transport_and_logjac(dto, y)
+            x = transport(dto, y)
             @test logpdf(dto, y) ≈ logpdf_fwd(dto, y)
-            @test logpdf_fwd(dto, y) ≈ logpdf(D, x) + lj
+            @test isapprox(fd_fwd(dto, D, y), logpdf_fwd(dto, y); atol = 1e-5)
             @test pullback(dto, x) ≈ y
         end
         # nested NamedDist with a Dirichlet leaf
@@ -273,8 +307,8 @@ const PT = ProbabilityTransports
             for S in (StdNormal(), StdUniform(), StdFlat())
                 dto = transport_to(d, S)
                 y = S === StdFlat() ? randn(rng, dimension(dto)) : rand(rng, dto)
-                x, lj = transport_and_logjac(dto, y)
-                @test logpdf_fwd(dto, y) ≈ logpdf(d, x) + lj
+                x = transport(dto, y)
+                @test isapprox(fd_fwd(dto, d, y), logpdf_fwd(dto, y); atol = 1e-5)
                 @test pullback(dto, x) ≈ y
             end
         end
@@ -298,8 +332,7 @@ const PT = ProbabilityTransports
                 dto = transport_to(D, S)
                 n = dimension(dto)
                 y = rand(rng, dto)
-                ref = S === StdNormal() ? StdNormal(n) : StdUniform(n)
-                @test logpdf_fwd(dto, y) ≈ logpdf(ref, y)   # exactness
+                @test isapprox(fd_fwd(dto, D, y), logpdf_fwd(dto, y); atol = 1e-5)   # exactness
                 @test pullback(dto, transport(dto, y)) ≈ y
             end
         end
@@ -333,10 +366,10 @@ const PT = ProbabilityTransports
         for S in (StdNormal(), StdUniform(), StdFlat())
             dto = transport_to(d, S)
             y = S === StdFlat() ? randn(rng, dimension(dto)) : rand(rng, dto)
-            x, lj = transport_and_logjac(dto, y)
+            x = transport(dto, y)
             xv = x isa AbstractArray ? x[1] : x
             @test -1.0 <= xv <= 2.0
-            @test logpdf_fwd(dto, y) ≈ logpdf(d, xv) + lj
+            @test isapprox(fd_fwd(dto, d, y), logpdf_fwd(dto, y); atol = 1e-5)
             @test pullback(dto, x) ≈ y
         end
     end
@@ -366,10 +399,12 @@ const PT = ProbabilityTransports
         dto = transport_to(d, StdFlat())
         @test dimension(dto) == 4
         y = randn(rng, 4)
-        x, lj = transport_and_logjac(dto, y)
+        x = transport(dto, y)
+        # dimension-reducing (2 reals -> 1 angle): no square Jacobian, so use TV directly
+        x_tv, lj = TV.transform_and_logjac(PT.transport(dto), y)
         @test x isa AbstractVector && length(x) == 2 && all(-π .< x .<= π)
         @test logpdf(dto, y) ≈ logpdf_fwd(dto, y)                 # flat: stop === nothing
-        @test logpdf_fwd(dto, y) ≈ logpdf(d, x) + lj
+        @test logpdf_fwd(dto, y) ≈ logpdf(d, x_tv) + lj
         @test transport(dto, pullback(dto, x)) ≈ x               # section holds one-way
 
         # StdNormal / StdUniform: no exact transport for a circular variable → error
@@ -381,9 +416,10 @@ const PT = ProbabilityTransports
         dtw = transport_to(wu, StdFlat())
         @test dimension(dtw) == 6
         yw = randn(rng, 6)
-        xw, ljw = transport_and_logjac(dtw, yw)
+        xw = transport(dtw, yw)
+        xw_tv, ljw = TV.transform_and_logjac(PT.transport(dtw), yw)
         @test length(xw) == 3
-        @test logpdf_fwd(dtw, yw) ≈ logpdf(wu, xw) + ljw
+        @test logpdf_fwd(dtw, yw) ≈ logpdf(wu, xw_tv) + ljw
     end
 
     @testset "DeltaDist (clamped parameter, 0-dim)" begin

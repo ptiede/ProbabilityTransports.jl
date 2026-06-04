@@ -35,8 +35,8 @@ end
 dimension(::ConstantTransport) = 0
 transport_node(d::DeltaDist, space) = ConstantTransport(d.x0)
 
-function transport_step(c::ConstantTransport, y, index)
-    return c.value, zero(_ensure_float(eltype(y))), index
-end
+transport_step(c::ConstantTransport, y, index) = (c.value, index)
+# (Under `StdFlat`, a clamped value is `TV.Constant` — see the TV extension — so this
+# core node only serves the Std spaces.)
 pullback_step!(y, index, ::ConstantTransport, x) = index
 pullback_eltype(::ConstantTransport, ::Type) = Bool

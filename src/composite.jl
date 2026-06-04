@@ -27,16 +27,14 @@ function transport_node(nt::NamedTuple, space)
     return TupleTransport(NamedTuple{keys(nt)}(map(x -> transport_node(x, space), values(nt))), space)
 end
 
-# --- forward stepping ---
+# --- forward stepping (value only) ---
 
-_transport_tuple(y, index, ::Tuple{}) =
-    (), zero(_ensure_float(eltype(y))), index
+_transport_tuple(y, index, ::Tuple{}) = (), index
 
 function _transport_tuple(y, index, ts)
-    t1 = first(ts)
-    y1, ℓ1, index1 = transport_step(t1, y, index)
-    yr, ℓr, index2 = _transport_tuple(y, index1, Base.tail(ts))
-    return (y1, yr...), ℓ1 + ℓr, index2
+    y1, index1 = transport_step(first(ts), y, index)
+    yr, index2 = _transport_tuple(y, index1, Base.tail(ts))
+    return (y1, yr...), index2
 end
 
 function transport_step(c::TupleTransport{<:Tuple}, y, index)
@@ -44,9 +42,12 @@ function transport_step(c::TupleTransport{<:Tuple}, y, index)
 end
 
 function transport_step(c::TupleTransport{<:NamedTuple}, y, index)
-    yt, ℓ, index′ = _transport_tuple(y, index, values(c.transports))
-    return NamedTuple{keys(c.transports)}(yt), ℓ, index′
+    yt, index′ = _transport_tuple(y, index, values(c.transports))
+    return NamedTuple{keys(c.transports)}(yt), index′
 end
+
+# (Under `StdFlat`, composites are a native `TV.as(...)` transform — see the TV
+# extension — so `TupleTransport` only ever serves the Jacobian-free Std spaces.)
 
 # --- backward stepping (per-component section) ---
 

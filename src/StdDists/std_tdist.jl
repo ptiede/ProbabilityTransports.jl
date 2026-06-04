@@ -56,18 +56,17 @@ end
 function Random.rand(rng::AbstractRNG, d::StdTDist{T, <:Number, 0}) where {T}
     return _rand_tdist(rng, d.ν)
 end
-function Dists._rand!(
-        rng::AbstractRNG, d::StdTDist{T, <:Number, N}, x::AbstractArray{<:Real, N}
-    ) where {T, N}
+# NOTE: the array sampler still uses a per-element loop. On CPU it is correct; under
+# Reactant `@compile` the loop does not thread the RNG (see `_rand_gamma` in
+# `misc.jl`), so array `StdTDist` sampling is not yet traceable — scalar sampling is.
+function _std_rand!(rng::AbstractRNG, d::StdTDist{T, <:Number}, x::AbstractArray) where {T}
     ν = d.ν
     @trace for i in eachindex(x)
         x[i] = _rand_tdist(rng, ν)
     end
     return x
 end
-function Dists._rand!(
-        rng::AbstractRNG, d::StdTDist{T, <:AbstractArray, N}, x::AbstractArray{<:Real, N}
-    ) where {T, N}
+function _std_rand!(rng::AbstractRNG, d::StdTDist{T, <:AbstractArray}, x::AbstractArray) where {T}
     @trace for i in eachindex(x)
         x[i] = _rand_tdist(rng, d.ν[i])
     end

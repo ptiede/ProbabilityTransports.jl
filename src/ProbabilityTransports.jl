@@ -23,7 +23,7 @@ using InverseFunctions: inverse
 using ArgCheck: @argcheck
 using Tricks: static_hasmethod
 
-using ReactantCore: @trace
+using ReactantCore: @trace, within_compile, promote_to_traced
 
 using Bessels: besseli0x
 
@@ -74,7 +74,7 @@ function spherical_unit_vector end
 
 export StdNormal, StdUniform, StdExponential, StdTDist, StdInverseGamma, StdFlat
 export NamedDist, TupleDist, DiagonalVonMises, WrappedUniform, DeltaDist, ProjectedNormal
-export transport_to, transport_node, transport, transport_and_logjac, pullback, logpdf_fwd, dimension
+export transport_to, transport_node, transport, transport_and_logdensity, pullback, logpdf_fwd, dimension
 export TransportedDistribution, PushforwardDistribution
 export angle_transform, spherical_unit_vector
 

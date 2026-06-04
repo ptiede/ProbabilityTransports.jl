@@ -59,19 +59,16 @@ end
 function Random.rand(rng::AbstractRNG, d::StdInverseGamma{T, <:Number, 0}) where {T}
     return inv(_rand_gamma(rng, d.α))
 end
-function Dists._rand!(
-        rng::AbstractRNG, d::StdInverseGamma{T, <:Number, N}, x::AbstractArray{<:Real, N}
-    ) where {T, N}
+# NOTE: see `std_tdist.jl` — the array sampler's per-element loop is CPU-correct but
+# not yet Reactant-traceable (the loop does not thread the RNG). Scalar sampling is.
+function _std_rand!(rng::AbstractRNG, d::StdInverseGamma{T, <:Number}, x::AbstractArray) where {T}
     α = d.α
     @trace for i in eachindex(x)
         x[i] = inv(_rand_gamma(rng, α))
     end
     return x
 end
-function Dists._rand!(
-        rng::AbstractRNG, d::StdInverseGamma{T, <:AbstractArray, N},
-        x::AbstractArray{<:Real, N}
-    ) where {T, N}
+function _std_rand!(rng::AbstractRNG, d::StdInverseGamma{T, <:AbstractArray}, x::AbstractArray) where {T}
     @trace for i in eachindex(x)
         x[i] = inv(_rand_gamma(rng, d.α[i]))
     end

@@ -26,12 +26,10 @@ end
 
 # ----- sampling -----------------------------------------------------------
 
-Random.rand(rng::AbstractRNG, ::StdExponential{T, 0}) where {T} = T(randexp(rng))
-function Dists._rand!(
-        rng::AbstractRNG, ::StdExponential{T, N}, x::AbstractArray{<:Real, N}
-    ) where {T, N}
-    return randexp!(rng, x)
-end
+# `randexp(rng, T)` (not `T(randexp(rng))`): see `std_normal.jl` — the typed draw
+# avoids the `T(::TracedRNumber)` coercion that has no method under Reactant.
+Random.rand(rng::AbstractRNG, ::StdExponential{T, 0}) where {T} = randexp(rng, T)
+_std_rand!(rng::AbstractRNG, ::StdExponential, x::AbstractArray) = randexp!(rng, x)
 
 
 # ----- support / moments --------------------------------------------------

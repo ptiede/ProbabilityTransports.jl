@@ -42,8 +42,9 @@ julia = "1.10"
 
 [extras]
 Reactant = "3c362404-f566-11ee-1572-e11a4b42c853"
+Reactant_jll = "0192cb87-2b54-54ad-80e0-3be72ad8a3c0"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 TransformVariables = "84d833dd-6860-57f9-a1a7-6da5db126cff"
 
 [targets]
-test = ["Test", "TransformVariables", "Reactant"]
+test = ["Test", "TransformVariables", "Reactant", "Reactant_jll"]

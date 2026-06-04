@@ -28,7 +28,7 @@ for (B, S) in ((:StdNormal, :StdNormal), (:StdUniform, :StdUniform))
     @eval function transport_step(c::ArrayTransport{<:$B, M, <:$S}, y, index) where {M}
         m = prod(c.dims)
         z = reshape(@view(y[index:(index + m - 1)]), c.dims)
-        return z, zero(_ensure_float(eltype(y))), index + m
+        return z, index + m
     end
     @eval function pullback_step!(y, index, c::ArrayTransport{<:$B, M, <:$S}, x) where {M}
         m = prod(c.dims)
@@ -42,13 +42,11 @@ function transport_step(c::ArrayTransport{<:_ArrayStd}, y, index)
     m = prod(c.dims)
     T = _ensure_float(eltype(y))
     out = Vector{T}(undef, m)
-    ℓ = zero(T)
     @inbounds for i in 1:m
-        xi, ℓi, index = transport_step(ScalarTransport(_elem_base(d, i), c.space), y, index)
+        xi, index = transport_step(ScalarTransport(_elem_base(d, i), c.space), y, index)
         out[i] = xi
-        ℓ += ℓi
     end
-    return reshape(out, c.dims), ℓ, index
+    return reshape(out, c.dims), index
 end
 
 function pullback_step!(y, index, c::ArrayTransport{<:_ArrayStd}, x)

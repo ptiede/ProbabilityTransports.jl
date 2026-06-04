@@ -16,7 +16,9 @@ StdUniform{T}(dims::Int...) where {T} = StdUniform{T}(dims)
 end
 # sum the branchless per-element kernel: 0 if every element ∈ [0,1], else -Inf
 # (uses `ifelse`, so it still traces under Reactant).
-@inline _unnormed_kernel_sum(d::StdUniform, z) = sum(zi -> _unnormed_kernel(d, zi, 1), z)
+# `init` keeps the 0-element case (a 0-dim reference, e.g. a clamped `DeltaDist`) at 0.
+@inline _unnormed_kernel_sum(d::StdUniform, z) =
+    sum(zi -> _unnormed_kernel(d, zi, 1), z; init = zero(eltype(z)))
 
 unnormed_logpdf(d::StdUniform{T, 0}, x::Number) where {T} = _unnormed_kernel(d, x, 1)
 function unnormed_logpdf(d::StdUniform{T, N}, x::AbstractArray{<:Number, N}) where {T, N}
@@ -28,11 +30,7 @@ end
 # ----- sampling -----------------------------------------------------------
 
 Random.rand(rng::AbstractRNG, ::StdUniform{T, 0}) where {T} = rand(rng, T)
-function Dists._rand!(
-        rng::AbstractRNG, ::StdUniform{T, N}, x::AbstractArray{<:Real, N}
-    ) where {T, N}
-    return rand!(rng, x)
-end
+_std_rand!(rng::AbstractRNG, ::StdUniform, x::AbstractArray) = rand!(rng, x)
 
 
 # ----- support / moments --------------------------------------------------

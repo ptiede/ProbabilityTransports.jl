@@ -39,7 +39,6 @@ dimension(d::TransportedDistribution) = dimension(getfield(d, :transport))
 Push the latent point `y` to the original distribution's space.
 """
 transport(d::TransportedDistribution, y) = transport(d.transport, y)
-transport_and_logjac(d::TransportedDistribution, y) = transport_and_logjac(d.transport, y)
 
 """
     pullback(dto::TransportedDistribution, x)
@@ -48,17 +47,24 @@ A latent point mapping to the original-space value `x` (a section; see [`pullbac
 """
 pullback(d::TransportedDistribution, x) = pullback(d.transport, x)
 
+# `transport_and_logdensity` dispatches on the *space* (the `stop` field).
+#
+# Std spaces: the transport is exact, so the pulled-back density is the closed-form
+# reference `logpdf(stop, y)` — we return the transported point (for the likelihood)
+# without ever forming a Jacobian. The `StdFlat` method (`stop === nothing`), which does
+# the genuine change of variables on a TV transform, lives in the TV extension.
+function transport_and_logdensity(d::TransportedDistribution, y)
+    return transport(getfield(d, :transport), y), Dists.logpdf(d, y)
+end
+
 """
     logpdf_fwd(dto, y)
 
-The pulled-back *target* density at latent `y`:
-`logpdf(start, transport(dto, y)) + logjac + logprior`. This is the density to put
-a sampler on.
+The pulled-back *target* density at latent `y` — the prior contribution a sampler
+targets. Equals `last(transport_and_logdensity(dto, y))`: `logpdf(reference, y)` for the
+Std spaces (exact transport) and `logpdf(start, transport(dto, y)) + logjac` for `StdFlat`.
 """
-function logpdf_fwd(d::TransportedDistribution, y)
-    x, ℓ = transport_and_logjac(getfield(d, :transport), y)
-    return Dists.logpdf(getfield(d, :start), x) + ℓ
-end
+logpdf_fwd(d::TransportedDistribution, y) = last(transport_and_logdensity(d, y))
 
 # ----- Distributions interface: behave like the latent reference ----------
 

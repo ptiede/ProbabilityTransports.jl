@@ -113,11 +113,8 @@ function Base.show(io::IO, d::PushforwardDistribution)
     return print(io, ")")
 end
 
-# Transport: wrap the base's transport in `f`. For `base === space` the inner is
-# the matching-base identity, so this is `f` over an identity (no cdf/quantile).
+# Transport (Std spaces): wrap the base's transport in `f`. For `base === space` the
+# inner is the matching-base identity, so this is `f` over an identity (no cdf/quantile).
+# (`StdFlat` is handled in the TV extension, where `f` wraps the base's TV transform.)
 transport_node(d::PushforwardDistribution, space) =
-    PushforwardTransport(d.f, transport_node(d.base, space))
-# A 0-dim pushforward is a `ContinuousUnivariateDistribution`, so disambiguate the
-# flat space from the generic univariate `transport_node(_, ::StdFlat)` (TV ext).
-transport_node(d::PushforwardDistribution, space::StdFlat) =
     PushforwardTransport(d.f, transport_node(d.base, space))

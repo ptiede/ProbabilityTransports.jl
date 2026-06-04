@@ -13,43 +13,50 @@ using LinearAlgebra: norm
 
 # ----- TransformVariables transforms ARE transport nodes --------------------
 #
-# A `TV.AbstractTransform` cannot subtype our `AbstractTransport` (no retroactive
-# subtyping across packages), but it already implements exactly our node protocol
-# under different names, so we just forward to TV's index-threaded primitives. The
-# core composite machinery then threads TV transforms through Tuples/NamedTuples/
-# NamedDist as leaves with no extra glue.
+# Under `StdFlat`, *every* node is a `TV.AbstractTransform` (the `transport_node`
+# methods below cover composites, clamped values and pushforwards too), so the whole
+# flat path runs on TV's own machinery — no core Jacobian plumbing is involved. A
+# `TV.AbstractTransform` cannot subtype our `AbstractTransport` (no retroactive
+# subtyping across packages), so we forward the value/pullback drivers here.
 
 PT.dimension(t::TV.AbstractTransform) = TV.dimension(t)
 
-# `transform_with` still needs a TV flag; we always ask for the log-Jacobian and let
-# the caller discard it (the value-only path is cold for the flat space).
+# Value-only step: ask TV for `NoLogJac` (exactly what `TV.transform` does) so we don't
+# materialize the per-element log-Jacobian buffer that `LogJac` allocates.
 function PT.transport_step(t::TV.AbstractTransform, y, index)
-    return TV.transform_with(TV.LogJac(), t, y, index)
+    val, _, index′ = TV.transform_with(TV.NoLogJac(), t, y, index)
+    return val, index′
 end
 
 PT.pullback_step!(y, index, t::TV.AbstractTransform, x) = TV.inverse_at!(y, index, t, x)
 PT.pullback_eltype(t::TV.AbstractTransform, ::Type{T}) where {T} = TV.inverse_eltype(t, T)
 
-# Standalone-leaf drivers: TV transforms are not `<: AbstractTransport`, so they do
-# not inherit the core `transport`/`transport_and_logjac`/`pullback` drivers. These
-# delegate through the step protocol (which handles scalar-in-a-vector correctly).
+# Standalone-leaf drivers: TV transforms are not `<: AbstractTransport`, so they do not
+# inherit the core `transport`/`pullback` drivers. These delegate through the step
+# protocol (which handles scalar-in-a-vector correctly).
 PT.transport(t::TV.AbstractTransform, y) = first(PT.transport_step(t, y, firstindex(y)))
-function PT.transport_and_logjac(t::TV.AbstractTransform, y)
-    val, ℓ, _ = PT.transport_step(t, y, firstindex(y))
-    return val, ℓ
-end
 function PT.pullback(t::TV.AbstractTransform, x)
     y = Vector{PT.pullback_eltype(t, typeof(x))}(undef, TV.dimension(t))
     PT.pullback_step!(y, firstindex(y), t, x)
     return y
 end
 
+# Flat-space density. `stop === nothing`, and the transport node is always a TV
+# transform, so the genuine change of variables comes straight from TV's `LogJac`
+# (`transform_with` via the index protocol handles a scalar transform fed a 1-vector).
+# This is the *only* `transport_and_logdensity` method that forms a Jacobian; the Std
+# spaces (in `transported.jl`) return the closed-form reference instead.
+function PT.transport_and_logdensity(d::PT.TransportedDistribution{<:Any, <:Any, Nothing}, y)
+    x, ℓ, _ = TV.transform_with(TV.LogJac(), getfield(d, :transport), y, firstindex(y))
+    return x, Dists.logpdf(getfield(d, :start), x) + ℓ
+end
+
 # ----- per-distribution flat building blocks (the asflat dispatch table) -----
 #
 # Each method is more specific (on the StdFlat space) than the core `transport_node`
-# methods, so there is no ambiguity. Tuples / NamedTuples / NamedDist fall through to
-# the core composite `transport_node`. `stop === nothing` makes `logpdf == logpdf_fwd`
-# for the flat space.
+# methods, so there is no ambiguity. Composites, clamped values and pushforwards are
+# handled below too, so under `StdFlat` the whole tree is a single TV transform.
+# `stop === nothing` makes `logpdf == logpdf_fwd` for the flat space.
 
 function _interval(d::Dists.UnivariateDistribution)
     s = Dists.support(d)
@@ -78,6 +85,55 @@ PT.transport_node(d::PT.Truncated{<:Any, <:Real, <:Real}, ::PT.StdFlat) = as(Rea
 PT.transport_node(d::PT.Truncated{<:Any, <:Real, Nothing}, ::PT.StdFlat) = as(Real, d.lower, TV.∞)
 PT.transport_node(d::PT.Truncated{<:Any, Nothing, <:Real}, ::PT.StdFlat) = as(Real, -TV.∞, d.upper)
 PT.transport_node(d::PT.Truncated{<:Any, Nothing, Nothing}, ::PT.StdFlat) = as(Real, -TV.∞, TV.∞)
+
+# ----- composites: a native TV transform tuple ------------------------------
+# Tuples / NamedTuples / NamedDist / TupleDist become a `TV.as(...)` so the whole flat
+# tree is one TV transform (vs. the core `TupleTransport`, which carries no Jacobian).
+# The `Tuple{}` / `NamedTuple{()}` methods resolve the ambiguity with the core empties.
+PT.transport_node(t::Tuple, s::PT.StdFlat) = TV.as(map(x -> PT.transport_node(x, s), t))
+PT.transport_node(t::Tuple{}, ::PT.StdFlat) = TV.as(())
+PT.transport_node(nt::NamedTuple, s::PT.StdFlat) = TV.as(map(x -> PT.transport_node(x, s), nt))
+PT.transport_node(nt::NamedTuple{()}, ::PT.StdFlat) = TV.as((;))
+PT.transport_node(d::PT.TupleDist, s::PT.StdFlat) = PT.transport_node(getfield(d, :dists), s)
+function PT.transport_node(d::PT.NamedDist{N}, s::PT.StdFlat) where {N}
+    return TV.as(NamedTuple{N}(map(x -> PT.transport_node(x, s), getfield(d, :dists))))
+end
+
+# ----- clamped value: TV ships a 0-dimensional constant transform ------------
+PT.transport_node(d::PT.DeltaDist, ::PT.StdFlat) = TV.Constant(d.x0)
+
+# ----- pushforward of a flat base by an invertible map ----------------------
+# Distributions that are the law of `f(Z)` for an invertible `f` (a `ChangesOfVariables`
+# map: our `ScaleShift`/`AffineTransform`) over a base `Z` whose flat transform is
+# `inner`. This is the flat-space form of the core `PushforwardTransport`, recast as a TV
+# transform so TV threads its Jacobian. `f`'s log|det| comes from `with_logabsdet_jacobian`.
+struct PushforwardTransform{F, I <: TV.AbstractTransform} <: TV.VectorTransform
+    f::F
+    inner::I
+end
+TV.dimension(t::PushforwardTransform) = TV.dimension(t.inner)
+
+function TV.transform_with(flag::TV.LogJacFlag, t::PushforwardTransform, y::AbstractVector, index)
+    z, ℓi, index′ = TV.transform_with(flag, t.inner, y, index)
+    flag isa TV.NoLogJac && return t.f(z), ℓi, index′
+    x, ℓf = PT.with_logabsdet_jacobian(t.f, z)
+    return x, ℓi + ℓf, index′
+end
+
+TV.inverse_eltype(t::PushforwardTransform, ::Type{T}) where {T} = TV.inverse_eltype(t.inner, T)
+function TV.inverse_at!(x, index, t::PushforwardTransform, y)
+    return TV.inverse_at!(x, index, t.inner, PT.inverse(t.f)(y))
+end
+
+# ProjectedNormal: an affine *shift* (scale 1) of the 2n flat standard normals.
+function PT.transport_node(d::PT.ProjectedNormal, s::PT.StdFlat)
+    ν = d.ν
+    return PushforwardTransform(PT.ScaleShift(ν, one(eltype(ν))), PT.transport_node(PT.StdNormal(length(ν)), s))
+end
+
+# PushforwardDistribution: `f(base)` — wrap the base's flat transform with `f`.
+PT.transport_node(d::PT.PushforwardDistribution, s::PT.StdFlat) =
+    PushforwardTransform(d.f, PT.transport_node(d.base, s))
 
 # ----- angular TV transforms (ported from VLBIImagePriors; primal only) -----
 

@@ -41,12 +41,10 @@ end
 # ----- Dirichlet: stick-breaking, dimension-reducing (K -> K-1) ------------
 #
 # The stick-breaking map (per-coordinate Beta quantiles) is an *exact* measure
-# transport from the per-coordinate reference to the Dirichlet, so the log
-# Jacobian is given by the change-of-variables identity
-#   logjac = Σ_i logpdf_S(y_i) - logpdf(Dirichlet, x)
-# which avoids hand-deriving the Beta Jacobian and makes logpdf_fwd reduce to the
-# reference density (≈ 0 for StdUniform). The pullback is the re-derived exact
-# inverse.
+# transport from the per-coordinate reference to the Dirichlet (dimension-reducing,
+# K -> K-1). Because it is exact, its pulled-back density under a Std space is the
+# closed-form reference and no Jacobian is needed (only `StdFlat` Dirichlet, handled by
+# TV's `UnitSimplex`, carries a Jacobian). The pullback is the re-derived exact inverse.
 
 dimension(c::ArrayTransport{<:Dists.Dirichlet}) =
     (prod(c.dims) - 1) * space_dimension(typeof(c.space))
@@ -58,7 +56,6 @@ function transport_step(c::ArrayTransport{<:Dists.Dirichlet}, y, index)
     m = K - 1
     T = _ensure_float(eltype(y))
     x = zeros(T, K)
-    ℓs = zero(T)
     remaining = one(T)
     @inbounds for i in 1:m
         yi = y[index + i - 1]
@@ -67,11 +64,9 @@ function transport_step(c::ArrayTransport{<:Dists.Dirichlet}, y, index)
         φ = quantile(Dists.Beta(T(α[i]), T(β)), u)
         x[i] = remaining * φ
         remaining -= x[i]
-        ℓs += space_logpdf(c.space, yi)
     end
     x[K] = remaining
-    ℓ = ℓs - Dists.logpdf(d, x)
-    return x, ℓ, index + m
+    return x, index + m
 end
 
 function pullback_step!(y, index, c::ArrayTransport{<:Dists.Dirichlet}, x)
