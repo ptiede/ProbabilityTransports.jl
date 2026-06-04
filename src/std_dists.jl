@@ -2,7 +2,8 @@
 # zero-mean / unit-scale references of arbitrary shape. `_sampling.jl` must
 # come first since `std_tdist.jl` / `std_inversegamma.jl` use `_rand_gamma`.
 
-include("StdDists/_sampling.jl")
+include("StdDists/interface.jl")
+include("StdDists/misc.jl")
 include("StdDists/std_normal.jl")
 include("StdDists/std_uniform.jl")
 include("StdDists/std_exponential.jl")

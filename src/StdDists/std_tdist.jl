@@ -1,17 +1,17 @@
-struct StdTDist{T, Tν, N} <: Dists.ContinuousDistribution{Dists.ArrayLikeVariate{N}}
+struct StdTDist{T, Tν, N} <: AbstractStdDist{T, N}
     ν::Tν
     dims::Dims{N}
 end
-StdTDist(ν::Number) = StdTDist{typeof(ν), typeof(ν), 0}(ν, ())
-StdTDist(ν::Number, dims::Dims{N}) where {N} = StdTDist{typeof(ν), typeof(ν), N}(ν, dims)
+# Store `ν` as-is; derive the output eltype `T` as the parameter type promoted to
+# a float. This keeps an integer `ν` from making `T = Int` (which would break the
+# `T(±Inf)`/`T(NaN)` moments) without copying float/traced parameter arrays.
+# `float(::Type)` resolves for traced eltypes inside a trace — the only place they
+# exist — and the per-element kernels coerce via the value-level `float(ν)`.
+StdTDist(ν::Number) = StdTDist{float(typeof(ν)), typeof(ν), 0}(ν, ())
+StdTDist(ν::Number, dims::Dims{N}) where {N} = StdTDist{float(typeof(ν)), typeof(ν), N}(ν, dims)
 StdTDist(ν::Number, dims::Int...) = StdTDist(ν, dims)
-function StdTDist(ν::AbstractArray{<:Number, N}) where {N}
-    return StdTDist{eltype(ν), typeof(ν), N}(ν, size(ν))
-end
-
-Base.size(d::StdTDist) = d.dims
-Base.length(d::StdTDist) = prod(d.dims)
-Base.eltype(::StdTDist{T}) where {T} = T
+StdTDist(ν::AbstractArray{<:Number, N}) where {N} =
+    StdTDist{float(eltype(ν)), typeof(ν), N}(ν, size(ν))
 
 
 # ----- log-pdf split ------------------------------------------------------
@@ -19,7 +19,7 @@ Base.eltype(::StdTDist{T}) where {T} = T
 # the expensive piece a caller will want to cache.
 
 @inline function _t_lognorm_per_elem(ν)
-    return loggamma((ν + 1) / 2) - loggamma(ν / 2) - oftype(ν, log(π)) / 2 - log(ν) / 2
+    return loggamma((ν + 1) / 2) - loggamma(ν / 2) - oftype(float(ν), log(π)) / 2 - log(ν) / 2
 end
 
 @inline function _unnormed_kernel(d::StdTDist, z)
@@ -42,28 +42,6 @@ end
 
 @inline lognorm(d::StdTDist{T, <:Number}) where {T} = length(d) * _t_lognorm_per_elem(d.ν)
 @inline lognorm(d::StdTDist{T, <:AbstractArray}) where {T} = sum(_t_lognorm_per_elem, d.ν)
-
-
-# ----- Distributions interface --------------------------------------------
-
-function Dists.logpdf(d::StdTDist{T, <:Number, 0}, x::Number) where {T}
-    return unnormed_logpdf(d, x) + lognorm(d)
-end
-function Dists._logpdf(
-        d::StdTDist{T, Tν, N}, x::AbstractArray{<:Number, N}
-    ) where {T, Tν, N}
-    return unnormed_logpdf(d, x) + lognorm(d)
-end
-function Dists.logpdf(
-        d::StdTDist{T, Tν, N}, x::AbstractArray{<:Real, N}
-    ) where {T, Tν, N}
-    return unnormed_logpdf(d, x) + lognorm(d)
-end
-function Dists.logpdf(
-        d::StdTDist{T, Tν, N}, x::AbstractArray{<:Number, N}
-    ) where {T, Tν, N}
-    return unnormed_logpdf(d, x) + lognorm(d)
-end
 
 
 # ----- sampling -----------------------------------------------------------
@@ -141,14 +119,14 @@ end
 
 @inline function _t_elem_cdf(ν, x)
     a = ν / 2
-    b = oftype(ν, 0.5)
+    b = oftype(float(ν), 0.5)
     arg = ν / (ν + x * x)
     P_arg = first(SpecialFunctions.beta_inc(a, b, arg))
     return ifelse(x >= zero(x), one(x) - P_arg / 2, P_arg / 2)
 end
 @inline function _t_elem_quantile(ν, p)
     a = ν / 2
-    b = oftype(ν, 0.5)
+    b = oftype(float(ν), 0.5)
     p_in = ifelse(p < oftype(p, 0.5), 2 * p, 2 * (one(p) - p))
     q_in = one(p) - p_in
     arg = first(SpecialFunctions.beta_inc_inv(a, b, p_in, q_in))

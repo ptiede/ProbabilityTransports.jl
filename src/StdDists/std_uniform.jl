@@ -1,4 +1,4 @@
-struct StdUniform{T, N} <: Dists.ContinuousDistribution{Dists.ArrayLikeVariate{N}}
+struct StdUniform{T, N} <: AbstractStdDist{T, N}
     dims::Dims{N}
 end
 StdUniform(dims::Dims{N}) where {N} = StdUniform{Float64, N}(dims)
@@ -8,17 +8,15 @@ StdUniform() = StdUniform{Float64, 0}(())
 StdUniform{T}(dims::Dims{N}) where {T, N} = StdUniform{T, N}(dims)
 StdUniform{T}(dims::Int...) where {T} = StdUniform{T}(dims)
 
-Base.size(d::StdUniform) = d.dims
-Base.length(d::StdUniform) = prod(d.dims)
-Base.eltype(::StdUniform{T}) where {T} = T
-
 
 # ----- log-pdf split ------------------------------------------------------
 
 @inline function _unnormed_kernel(::StdUniform, z, _)
     return ifelse((z >= zero(z)) & (z <= one(z)), zero(z), oftype(z, -Inf))
 end
-@inline _unnormed_kernel_sum(::StdUniform, z) = zero(eltype(z))
+# sum the branchless per-element kernel: 0 if every element ∈ [0,1], else -Inf
+# (uses `ifelse`, so it still traces under Reactant).
+@inline _unnormed_kernel_sum(d::StdUniform, z) = sum(zi -> _unnormed_kernel(d, zi, 1), z)
 
 unnormed_logpdf(d::StdUniform{T, 0}, x::Number) where {T} = _unnormed_kernel(d, x, 1)
 function unnormed_logpdf(d::StdUniform{T, N}, x::AbstractArray{<:Number, N}) where {T, N}
@@ -26,21 +24,6 @@ function unnormed_logpdf(d::StdUniform{T, N}, x::AbstractArray{<:Number, N}) whe
 end
 
 @inline lognorm(d::StdUniform) = zero(eltype(d))
-
-
-# ----- Distributions interface --------------------------------------------
-
-Dists.logpdf(d::StdUniform{T, 0}, x::Number) where {T} = unnormed_logpdf(d, x) + lognorm(d)
-function Dists._logpdf(d::StdUniform{T, N}, x::AbstractArray{<:Number, N}) where {T, N}
-    return unnormed_logpdf(d, x) + lognorm(d)
-end
-function Dists.logpdf(d::StdUniform{T, N}, x::AbstractArray{<:Real, N}) where {T, N}
-    return unnormed_logpdf(d, x) + lognorm(d)
-end
-function Dists.logpdf(d::StdUniform{T, N}, x::AbstractArray{<:Number, N}) where {T, N}
-    return unnormed_logpdf(d, x) + lognorm(d)
-end
-
 
 # ----- sampling -----------------------------------------------------------
 

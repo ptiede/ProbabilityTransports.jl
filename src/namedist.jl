@@ -75,6 +75,7 @@ function transport_node(d::NamedDist{N}, space) where {N}
     # `dists` is a plain tuple (names live in the `N` type param); map the
     # component nodes directly and re-attach the names — equivalent to, but
     # without the round-trip through `transport_node(::NamedTuple, space)`.
-    nodes = map(x -> transport_node(x, space), getfield(d, :dists))
+    tn = Base.Fix2(transport_node, space)
+    nodes = map(tn, getfield(d, :dists))
     return TupleTransport(NamedTuple{N}(nodes), space)
 end

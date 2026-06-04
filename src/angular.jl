@@ -6,7 +6,9 @@
 
 A (multivariate, independent) von Mises distribution with mean `μ` and
 concentration `κ`. Custom implementation (vs `Distributions.VonMises`) with full
-support on the circle and a `product_distribution` that preserves the type.
+support on the circle, a `product_distribution` that preserves the type, and a
+type-generic sampler that honours `Float32` (unlike `Distributions.VonMisesSampler`,
+which is hardcoded to `Float64`).
 """
 struct DiagonalVonMises{M, K, C} <: Dists.ContinuousMultivariateDistribution
     μ::M
@@ -47,11 +49,66 @@ function Dists.logpdf(d::DiagonalVonMises, x::Union{Number, AbstractVector})
     return _vonlogpdf(d.μ, d.κ, x) + d.lnorm
 end
 
-function Dists._rand!(rng::AbstractRNG, d::DiagonalVonMises, x::AbstractVector)
-    dv = Dists.product_distribution(Dists.VonMises.(d.μ, d.κ))
-    return rand!(rng, dv, x)
+# Type-generic, Reactant-traceable von Mises sampler. `Distributions.VonMisesSampler`
+# hardcodes `Float64` (its fields and the `rand`/`randn` draws inside are all
+# Float64), so sampling a Float32 von Mises silently promotes to Float64. This
+# implementation carries the element type through, so a Float32 (μ, κ) yields a
+# Float32 draw.
+#
+# Algorithm: DJ Best & NI Fisher (1979), "Efficient Simulation of the von Mises
+# Distribution", J. R. Stat. Soc. C, 28(2), 152-157, in its single-uniform form
+# (cf. NumPy `random.vonmises` / R `rvm`): `z = cos(π u₁)` replaces the quarter-
+# disk rejection of the textbook version, leaving a single rejection loop.
+#
+# That loop is written condition-driven (a loop-carried `accepted`, no `break`)
+# and wrapped in `@trace while`: under Reactant compilation with traced arguments
+# it lowers to `stablehlo.while`; otherwise `@trace` expands to the plain loop, so
+# CPU sampling is unchanged. `@trace` forbids `break`/`continue`/`return` in its
+# body, hence the boolean-flag form.
+function _rand_vonmises(rng::AbstractRNG, μ::Real, κ::Real)
+    T = float(promote_type(typeof(μ), typeof(κ)))
+    m = T(μ)
+    k = T(κ)
+    # Large-κ limit: von Mises → Normal(μ, 1/κ). The rejection step below both
+    # loses efficiency and becomes numerically delicate here, so fall back.
+    if k > T(700)
+        return m + randn(rng, T) / sqrt(k)
+    end
+    τ = one(T) + sqrt(one(T) + 4 * abs2(k))
+    ρ = (τ - sqrt(2 * τ)) / (2 * k)
+    r = (one(T) + abs2(ρ)) / (2 * ρ)
+    f = zero(T)
+    accepted = false
+    # Hoist `π` out of the loop. `@trace while` threads every symbol referenced in
+    # its body as loop-carried state with `track_numbers=true`; if `π` (an
+    # `Irrational`) appears inside, Reactant tries to build an `RNumber{Irrational}`
+    # and errors. A concrete `T(π)` computed beforehand threads fine.
+    cπ = T(π)
+    @trace while !accepted
+        u1 = rand(rng, T)
+        u2 = rand(rng, T)
+        z = cos(cπ * u1)
+        f = (one(T) + r * z) / (r + z)
+        c = k * (r - f)
+        # `c > 0` always here (r > 1 ≥ f), so `log(c / u2)` is well-defined; use
+        # the non-short-circuit `|` since `@trace` can't trace `||`'s branch.
+        accepted = (c * (2 - c) > u2) | (log(c / u2) + one(T) >= c)
+    end
+    # branch-free sign (`±acos(f)`); `sign(u₃ - ½) ∈ {-1, +1}` w.p. 1.
+    u3 = rand(rng, T)
+    return m + sign(u3 - T(0.5)) * acos(f)
 end
-Dists.rand(rng::AbstractRNG, d::DiagonalVonMises{<:Real, <:Real}) = rand(rng, Dists.VonMises.(d.μ, d.κ))
+
+function Dists._rand!(rng::AbstractRNG, d::DiagonalVonMises, x::AbstractVector)
+    @argcheck length(x) == length(d.μ) == length(d.κ)
+    # `@trace for` mirrors the Std* samplers: a `stablehlo` loop under Reactant,
+    # a plain loop otherwise.
+    @trace for i in eachindex(x)
+        x[i] = _rand_vonmises(rng, d.μ[i], d.κ[i])
+    end
+    return x
+end
+Dists.rand(rng::AbstractRNG, d::DiagonalVonMises{<:Real, <:Real}) = _rand_vonmises(rng, d.μ, d.κ)
 
 function Dists.product_distribution(dists::AbstractVector{<:DiagonalVonMises})
     μ = mapreduce(x -> x.μ, vcat, dists)
@@ -85,7 +142,7 @@ WrappedUniform(p::Number, n::Int) = WrappedUniform(fill(p, n), n * log(p))
 WrappedUniform(p::Number) = WrappedUniform(p, log(p))
 
 Dists.logpdf(d::WrappedUniform{<:Real}, ::Number) = -d.lnorm
-Dists._logpdf(d::WrappedUniform, ::AbstractVector) = -d.lnorm
+Dists.logpdf(d::WrappedUniform, ::AbstractVector) = -d.lnorm
 Dists.rand(rng::AbstractRNG, d::WrappedUniform{<:Real}) = rand(rng) * d.periods
 function Dists._rand!(rng::AbstractRNG, d::WrappedUniform, x::AbstractVector{T}) where {T <: Real}
     rand!(rng, x)

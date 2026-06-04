@@ -1,12 +1,12 @@
 # Internal sampling helpers shared by the Std* distributions.
 
-"""
-    _rand_gamma(rng, α)
+#
+#    _rand_gamma(rng, α)
 
-Draw a `Gamma(α, 1)` (shape `α`, unit scale) variate using the Marsaglia–Tsang
-method. For `α < 1` the boost identity `Gamma(α) = Gamma(α+1) · U^(1/α)` is used.
-Internal; backs `StdTDist` (via a χ² draw) and `StdInverseGamma`.
-"""
+#Draw a `Gamma(α, 1)` (shape `α`, unit scale) variate using the Marsaglia–Tsang
+#method. For `α < 1` the boost identity `Gamma(α) = Gamma(α+1) · U^(1/α)` is used.
+#Internal; backs `StdTDist` (via a χ² draw) and `StdInverseGamma`.
+#
 function _rand_gamma(rng::AbstractRNG, α::Real)
     T = float(typeof(α))
     a = T(α)

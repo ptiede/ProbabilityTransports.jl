@@ -1,14 +1,9 @@
-struct StdExponential{T, N} <: Dists.ContinuousDistribution{Dists.ArrayLikeVariate{N}}
+struct StdExponential{T, N} <: AbstractStdDist{T, N}
     dims::Dims{N}
 end
 StdExponential(dims::Dims{N}) where {N} = StdExponential{Float64, N}(dims)
 StdExponential(dims::Int...) = StdExponential(dims)
 StdExponential() = StdExponential{Float64, 0}(())
-
-Base.size(d::StdExponential) = d.dims
-Base.length(d::StdExponential) = prod(d.dims)
-Base.eltype(::StdExponential{T}) where {T} = T
-
 
 # ----- log-pdf split ------------------------------------------------------
 
@@ -27,22 +22,6 @@ function unnormed_logpdf(
 end
 
 @inline lognorm(d::StdExponential) = zero(eltype(d))
-
-
-# ----- Distributions interface --------------------------------------------
-
-function Dists.logpdf(d::StdExponential{T, 0}, x::Number) where {T}
-    return unnormed_logpdf(d, x) + lognorm(d)
-end
-function Dists._logpdf(d::StdExponential{T, N}, x::AbstractArray{<:Number, N}) where {T, N}
-    return unnormed_logpdf(d, x) + lognorm(d)
-end
-function Dists.logpdf(d::StdExponential{T, N}, x::AbstractArray{<:Real, N}) where {T, N}
-    return unnormed_logpdf(d, x) + lognorm(d)
-end
-function Dists.logpdf(d::StdExponential{T, N}, x::AbstractArray{<:Number, N}) where {T, N}
-    return unnormed_logpdf(d, x) + lognorm(d)
-end
 
 
 # ----- sampling -----------------------------------------------------------

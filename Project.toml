@@ -33,6 +33,7 @@ InverseFunctions = "0.1.17"
 LinearAlgebra = "1.11.0"
 PDMats = "0.11.37"
 Random = "1.11.0"
+Reactant = "0.2"
 ReactantCore = "0.1.19"
 SpecialFunctions = "2.8.0"
 TransformVariables = "0.8"
@@ -40,8 +41,9 @@ Tricks = "0.1.13"
 julia = "1.10"
 
 [extras]
+Reactant = "3c362404-f566-11ee-1572-e11a4b42c853"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 TransformVariables = "84d833dd-6860-57f9-a1a7-6da5db126cff"
 
 [targets]
-test = ["Test", "TransformVariables"]
+test = ["Test", "TransformVariables", "Reactant"]

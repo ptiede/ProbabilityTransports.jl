@@ -54,6 +54,12 @@ _logabsdet(L::AbstractMatrix) = first(logabsdet(L))
 function ChangesOfVariables.with_logabsdet_jacobian(f::AffineTransform, z)
     return f(z), _logabsdet(f.L)
 end
+# inverse map `z = L \ (x - μ)` has log-det `-logabsdet(L)` (needed by the
+# distribution-side change of variables; `ScaleShift`'s inverse is a `ScaleShift`
+# so it already has one).
+function ChangesOfVariables.with_logabsdet_jacobian(g::InvAffineTransform, x)
+    return g(x), -_logabsdet(g.L)
+end
 
 # ----- the pushforward transport node -------------------------------------
 

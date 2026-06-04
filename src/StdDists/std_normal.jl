@@ -4,7 +4,7 @@
 # unchanged so existing references in `srf.jl` and `markovrf/gmrf.jl` remain
 # valid.
 
-struct StdNormal{T, N} <: Dists.ContinuousDistribution{Dists.ArrayLikeVariate{N}}
+struct StdNormal{T, N} <: AbstractStdDist{T, N}
     dims::Dims{N}
 end
 StdNormal(d::Dims{N}) where {N} = StdNormal{Float64, N}(d)
@@ -13,9 +13,6 @@ StdNormal(d::Int...) = StdNormal(d)
 StdNormal{T}(d::Dims{N}) where {T, N} = StdNormal{T, N}(d)
 StdNormal{T}(d::Int...) where {T} = StdNormal{T}(d)
 
-Base.size(d::StdNormal) = d.dims
-Base.length(d::StdNormal) = prod(d.dims)
-Base.eltype(::StdNormal{T}) where {T} = T
 Dists.insupport(::StdNormal, ::Number) = true
 Dists.insupport(::StdNormal, ::Real) = true
 Dists.insupport(::StdNormal, x::AbstractArray) = true
@@ -39,26 +36,6 @@ function unnormed_logpdf(d::StdNormal{T, N}, x::AbstractArray{<:Number, N}) wher
 end
 
 @inline lognorm(d::StdNormal) = -length(d) * oftype(zero(eltype(d)), log(2π) / 2)
-
-
-# ----- Distributions interface --------------------------------------------
-
-Dists.logpdf(d::StdNormal{T, 0}, x::Number) where {T} = unnormed_logpdf(d, x) + lognorm(d)
-
-# Three-method pattern. `<:Number` is the workhorse (covers Reactant traced
-# eltypes); `<:Real` is required to break ambiguity with Distributions'
-# fallback `logpdf(::Distribution{ArrayLikeVariate{N}}, ::AbstractArray{<:Real, M})`
-# at `Distributions/.../common.jl:261`. Without the `<:Real` override Julia
-# emits an ambiguity error for `Matrix{Float64}` inputs (verified empirically).
-function Dists._logpdf(d::StdNormal{T, N}, x::AbstractArray{<:Number, N}) where {T, N}
-    return unnormed_logpdf(d, x) + lognorm(d)
-end
-function Dists.logpdf(d::StdNormal{T, N}, x::AbstractArray{<:Real, N}) where {T, N}
-    return unnormed_logpdf(d, x) + lognorm(d)
-end
-function Dists.logpdf(d::StdNormal{T, N}, x::AbstractArray{<:Number, N}) where {T, N}
-    return unnormed_logpdf(d, x) + lognorm(d)
-end
 
 
 # ----- sampling -----------------------------------------------------------

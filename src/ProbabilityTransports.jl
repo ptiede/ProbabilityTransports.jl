@@ -39,6 +39,7 @@ include("std_dists.jl")
 include("spaces.jl")
 include("transport.jl")
 include("pushforward.jl")
+include("pushforward_distribution.jl")
 include("composite.jl")
 include("namedist.jl")
 include("specialized.jl")
@@ -74,7 +75,7 @@ function spherical_unit_vector end
 export StdNormal, StdUniform, StdExponential, StdTDist, StdInverseGamma, StdFlat
 export NamedDist, TupleDist, DiagonalVonMises, WrappedUniform, DeltaDist, ProjectedNormal
 export transport_to, transport_node, transport, transport_and_logjac, pullback, logpdf_fwd, dimension
-export TransportedDistribution
+export TransportedDistribution, PushforwardDistribution
 export angle_transform, spherical_unit_vector
 
 end # module

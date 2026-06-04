@@ -28,22 +28,22 @@ end
 
 function Truncated(d::Dists.UnivariateDistribution, lower::Number, upper::Number)
     lcdf = Dists.cdf(d, lower)
-    ucdf = Dists.cdf(d, upper)
-    loglcdf = log(lcdf)
-    logucdf = log(ucdf)
+    # use logcdf (not log(cdf)) so deep-tail bounds don't underflow to log(0) = -Inf → NaN
+    loglcdf = Dists.logcdf(d, lower)
+    logucdf = Dists.logcdf(d, upper)
     logtp = logucdf + log1p(-exp(loglcdf - logucdf))   # stable log(ucdf - lcdf)
     T = promote_type(typeof(logtp), typeof(lcdf))
     return Truncated{typeof(d), typeof(lower), typeof(upper), T}(d, lower, upper, T(logtp), T(lcdf))
 end
 function Truncated(d::Dists.UnivariateDistribution, ::Nothing, upper::Number)
     ucdf = Dists.cdf(d, upper)
-    logtp = log(ucdf)
+    logtp = Dists.logcdf(d, upper)   # logcdf avoids underflow when upper is deep in the left tail
     T = promote_type(typeof(logtp), typeof(ucdf))
     return Truncated{typeof(d), Nothing, typeof(upper), T}(d, nothing, upper, T(logtp), zero(T))
 end
 function Truncated(d::Dists.UnivariateDistribution, lower::Number, ::Nothing)
     lcdf = Dists.cdf(d, lower)
-    logtp = log1p(-lcdf)
+    logtp = Dists.logccdf(d, lower)   # log(1 - cdf(lower)), avoids precision loss when lcdf ≈ 1
     T = promote_type(typeof(logtp), typeof(lcdf))
     return Truncated{typeof(d), typeof(lower), Nothing, T}(d, lower, nothing, T(logtp), T(lcdf))
 end

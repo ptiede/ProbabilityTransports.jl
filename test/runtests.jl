@@ -348,6 +348,20 @@ const PT = ProbabilityTransports
         @test logpdf(d, [0.1, 0.9]) ≈ logpdf(VonMises(0.0, 2.0), 0.1) + logpdf(VonMises(1.0, 3.0), 0.9)
         @test logpdf(DiagonalVonMises(0.5, 2.0), 0.3) ≈ logpdf(VonMises(0.5, 2.0), 0.3)
 
+        # sampler is type-generic: a Float32 (μ, κ) yields Float32 draws (the
+        # Distributions sampler is hardcoded to Float64 and would promote).
+        @test rand(rng, DiagonalVonMises(0.5f0, 3.0f0)) isa Float32
+        @test eltype(rand(rng, DiagonalVonMises(Float32[0.0, 1.0], Float32[2.0, 5.0]))) == Float32
+        @test rand(rng, DiagonalVonMises(0.5, 3.0)) isa Float64
+        # statistical sanity: mean resultant length matches Distributions.VonMises
+        let μ = 0.7, κ = 4.0, N = 100_000
+            ours = [rand(rng, DiagonalVonMises(μ, κ)) for _ in 1:N]
+            ref = rand(rng, VonMises(μ, κ), N)
+            R(x) = hypot(sum(sin, x), sum(cos, x)) / length(x)
+            @test isapprox(R(ours), R(ref); atol = 0.01)
+            @test isapprox(atan(sum(sin, ours), sum(cos, ours)), μ; atol = 0.02)
+        end
+
         # StdFlat: AngleTransform per angle (2 reals -> 1 angle); section, not bijection
         dto = transport_to(d, StdFlat())
         @test dimension(dto) == 4
@@ -394,4 +408,18 @@ const PT = ProbabilityTransports
         end
     end
 
+end
+
+# Reactant tracing tests, guarded: Reactant is a heavy test dep that frequently
+# fails to load/precompile on Julia nightly. Skip with a warning rather than
+# failing the whole suite when it is unavailable.
+const REACTANT_AVAILABLE = try
+    @eval using Reactant
+    true
+catch err
+    @warn "Reactant unavailable — skipping Reactant tracing tests" exception = err
+    false
+end
+if REACTANT_AVAILABLE
+    include("reactant.jl")
 end

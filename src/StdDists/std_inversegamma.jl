@@ -3,18 +3,19 @@
 # `α` may be a scalar (broadcast across the support) or an array of the same
 # shape as the distribution.
 
-struct StdInverseGamma{T, Tα, N} <: Dists.ContinuousDistribution{Dists.ArrayLikeVariate{N}}
+struct StdInverseGamma{T, Tα, N} <: AbstractStdDist{T, N}
     α::Tα
     dims::Dims{N}
 end
-StdInverseGamma(α::Number) = StdInverseGamma{typeof(α), typeof(α), 0}(α, ())
-function StdInverseGamma(α::Number, dims::Dims{N}) where {N}
-    return StdInverseGamma{typeof(α), typeof(α), N}(α, dims)
-end
+# Store `α` as-is; derive the output eltype `T` as the parameter type promoted to a
+# float (so an integer `α` doesn't make `T = Int` and break the `T(Inf)` moments),
+# without copying float/traced parameter arrays. See `std_tdist.jl` for the rationale.
+StdInverseGamma(α::Number) = StdInverseGamma{float(typeof(α)), typeof(α), 0}(α, ())
+StdInverseGamma(α::Number, dims::Dims{N}) where {N} =
+    StdInverseGamma{float(typeof(α)), typeof(α), N}(α, dims)
 StdInverseGamma(α::Number, dims::Int...) = StdInverseGamma(α, dims)
-function StdInverseGamma(α::AbstractArray{<:Number, N}) where {N}
-    return StdInverseGamma{eltype(α), typeof(α), N}(α, size(α))
-end
+StdInverseGamma(α::AbstractArray{<:Number, N}) where {N} =
+    StdInverseGamma{float(eltype(α)), typeof(α), N}(α, size(α))
 
 Base.size(d::StdInverseGamma) = d.dims
 Base.length(d::StdInverseGamma) = prod(d.dims)
@@ -51,27 +52,6 @@ end
 @inline lognorm(d::StdInverseGamma{T, <:AbstractArray}) where {T} = -sum(loggamma, d.α)
 
 
-# ----- Distributions interface --------------------------------------------
-
-function Dists.logpdf(d::StdInverseGamma{T, <:Number, 0}, x::Number) where {T}
-    return unnormed_logpdf(d, x) + lognorm(d)
-end
-function Dists._logpdf(
-        d::StdInverseGamma{T, Tα, N}, x::AbstractArray{<:Number, N}
-    ) where {T, Tα, N}
-    return unnormed_logpdf(d, x) + lognorm(d)
-end
-function Dists.logpdf(
-        d::StdInverseGamma{T, Tα, N}, x::AbstractArray{<:Real, N}
-    ) where {T, Tα, N}
-    return unnormed_logpdf(d, x) + lognorm(d)
-end
-function Dists.logpdf(
-        d::StdInverseGamma{T, Tα, N}, x::AbstractArray{<:Number, N}
-    ) where {T, Tα, N}
-    return unnormed_logpdf(d, x) + lognorm(d)
-end
-
 
 # ----- sampling -----------------------------------------------------------
 
@@ -97,6 +77,8 @@ function Dists._rand!(
     end
     return x
 end
+
+
 
 
 # ----- support / moments --------------------------------------------------
