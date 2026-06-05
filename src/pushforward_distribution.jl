@@ -76,10 +76,18 @@ Dists.mean(d::PushforwardDistribution) = d.f(Dists.mean(d.base))
 
 Dists.rand(rng::AbstractRNG, d::PushforwardDistribution) = d.f(rand(rng, d.base))
 
-function Dists._rand!(rng::AbstractRNG, d::PushforwardDistribution, x::AbstractArray)
+# Two thin entries delegating to `_pf_rand!`. The `<:Real` method breaks the ambiguity
+# with `Distributions._rand!(::Sampleable{<:ArrayLikeVariate}, ::AbstractArray{<:Real})`
+# (strictly more specific in the distribution argument); the `<:Number` method admits
+# traced (Reactant) arrays, whose eltype is not `<:Real`.
+function _pf_rand!(rng::AbstractRNG, d::PushforwardDistribution, x::AbstractArray)
     x .= d.f(rand(rng, d.base))
     return x
 end
+Dists._rand!(rng::AbstractRNG, d::PushforwardDistribution, x::AbstractArray{<:Number}) =
+    _pf_rand!(rng, d, x)
+Dists._rand!(rng::AbstractRNG, d::PushforwardDistribution, x::AbstractArray{<:Real}) =
+    _pf_rand!(rng, d, x)
 
 # moments: element-wise scale ⇒ `var = scale² var(base)`; matrix scale ⇒
 # `cov = A cov(base) Aᵀ` (a genuine covariance), `var = diag(cov)`.

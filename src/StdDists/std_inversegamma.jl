@@ -3,24 +3,26 @@
 # `α` may be a scalar (broadcast across the support) or an array of the same
 # shape as the distribution.
 
-struct StdInverseGamma{T, Tα, N} <: AbstractStdDist{T, N}
+struct StdInverseGamma{T, Tα, N, Tl} <: AbstractStdDist{T, N}
     α::Tα
+    lognorm::Tl
     dims::Dims{N}
+    # Precompute the normalization because it is expensive
+    function StdInverseGamma(α::Union{Number, AbstractArray}, dims::Dims{N}) where {N}
+        Tα = eltype(α)
+        T = float(Tα)
+        lognorm = _lognorm_igamma(α, prod(dims))
+        return new{T, Tα, N, typeof(lognorm)}(α, lognorm, dims)
+    end
 end
-# Store `α` as-is; derive the output eltype `T` as the parameter type promoted to a
-# float (so an integer `α` doesn't make `T = Int` and break the `T(Inf)` moments),
-# without copying float/traced parameter arrays. See `std_tdist.jl` for the rationale.
-StdInverseGamma(α::Number) = StdInverseGamma{float(typeof(α)), typeof(α), 0}(α, ())
-StdInverseGamma(α::Number, dims::Dims{N}) where {N} =
-    StdInverseGamma{float(typeof(α)), typeof(α), N}(α, dims)
+
+# Compute the normalization 
+@inline _lognorm_igamma(d::Number, N) = -N * loggamma(d)
+@inline _lognorm_igamma(d::AbstractArray, N) = -sum(loggamma, d)
+
+StdInverseGamma(α::Number) = StdInverseGamma(α, ())
 StdInverseGamma(α::Number, dims::Int...) = StdInverseGamma(α, dims)
-StdInverseGamma(α::AbstractArray{<:Number, N}) where {N} =
-    StdInverseGamma{float(eltype(α)), typeof(α), N}(α, size(α))
-
-Base.size(d::StdInverseGamma) = d.dims
-Base.length(d::StdInverseGamma) = prod(d.dims)
-Base.eltype(::StdInverseGamma{T}) where {T} = T
-
+StdInverseGamma(α::AbstractArray) = StdInverseGamma(α, size(α))
 
 # ----- log-pdf split ------------------------------------------------------
 # `loggamma(α)` is the expensive piece for an array `α`; folding it into
@@ -48,10 +50,7 @@ function unnormed_logpdf(
     return _unnormed_kernel_sum(d, x)
 end
 
-@inline lognorm(d::StdInverseGamma{T, <:Number}) where {T} = -length(d) * loggamma(d.α)
-@inline lognorm(d::StdInverseGamma{T, <:AbstractArray}) where {T} = -sum(loggamma, d.α)
-
-
+@inline lognorm(d::StdInverseGamma) = d.lognorm
 
 # ----- sampling -----------------------------------------------------------
 

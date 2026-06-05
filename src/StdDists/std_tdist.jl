@@ -1,25 +1,38 @@
-struct StdTDist{T, Tν, N} <: AbstractStdDist{T, N}
+struct StdTDist{T, Tν, N, Tl} <: AbstractStdDist{T, N}
     ν::Tν
+    lognorm::Tl
     dims::Dims{N}
+    function StdTDist(ν::Union{Number, AbstractArray}, dims::Dims{N}) where {N}
+        Tν = eltype(ν)
+        T = float(Tν)
+        lognorm = _lognorm_tdist(ν, prod(dims))
+        return new{T, Tν, N, typeof(lognorm)}(ν, lognorm, dims)
+    end
 end
 # Store `ν` as-is; derive the output eltype `T` as the parameter type promoted to
 # a float. This keeps an integer `ν` from making `T = Int` (which would break the
 # `T(±Inf)`/`T(NaN)` moments) without copying float/traced parameter arrays.
 # `float(::Type)` resolves for traced eltypes inside a trace — the only place they
 # exist — and the per-element kernels coerce via the value-level `float(ν)`.
-StdTDist(ν::Number) = StdTDist{float(typeof(ν)), typeof(ν), 0}(ν, ())
-StdTDist(ν::Number, dims::Dims{N}) where {N} = StdTDist{float(typeof(ν)), typeof(ν), N}(ν, dims)
+StdTDist(ν::Number) = StdTDist(ν, ())
 StdTDist(ν::Number, dims::Int...) = StdTDist(ν, dims)
-StdTDist(ν::AbstractArray{<:Number, N}) where {N} =
-    StdTDist{float(eltype(ν)), typeof(ν), N}(ν, size(ν))
+StdTDist(ν::AbstractArray) = StdTDist(ν, size(ν))
 
 
 # ----- log-pdf split ------------------------------------------------------
 # `lognorm` for an array `ν` involves `loggamma((ν+1)/2)` per element — that's
 # the expensive piece a caller will want to cache.
 
-@inline function _t_lognorm_per_elem(ν)
+function _lognorm_tdist_per_elem(ν::Number)
     return loggamma((ν + 1) / 2) - loggamma(ν / 2) - oftype(float(ν), log(π)) / 2 - log(ν) / 2
+end
+
+@inline function _lognorm_tdist(ν::Number, N)
+    return N * _lognorm_tdist_per_elem(ν)
+end
+
+@inline function _lognorm_tdist(ν::AbstractArray, N)
+    return sum(_lognorm_tdist_per_elem, ν)
 end
 
 @inline function _unnormed_kernel(d::StdTDist, z)
@@ -28,9 +41,13 @@ end
 end
 @inline function _unnormed_kernel_sum(d::StdTDist, z)
     ν = d.ν
-    sq = abs2.(z)
-    log_terms = log1p.(sq ./ ν)
-    return -sum(((ν .+ 1) ./ 2) .* log_terms)
+    s = zero(z)
+    @trace for i in eachindex(z)
+        log_term = log1p(abs2(z[i]) / ν[i])
+        νi = _getith(ν, i)
+        s += ((νi + one(νi)) / 2) * log_term
+    end
+    return -s
 end
 
 unnormed_logpdf(d::StdTDist{T, <:Number, 0}, x::Number) where {T} = _unnormed_kernel(d, x)
@@ -40,9 +57,7 @@ function unnormed_logpdf(
     return _unnormed_kernel_sum(d, x)
 end
 
-@inline lognorm(d::StdTDist{T, <:Number}) where {T} = length(d) * _t_lognorm_per_elem(d.ν)
-@inline lognorm(d::StdTDist{T, <:AbstractArray}) where {T} = sum(_t_lognorm_per_elem, d.ν)
-
+@inline lognorm(d::StdTDist) = d.lognorm
 
 # ----- sampling -----------------------------------------------------------
 
@@ -59,16 +74,10 @@ end
 # NOTE: the array sampler still uses a per-element loop. On CPU it is correct; under
 # Reactant `@compile` the loop does not thread the RNG (see `_rand_gamma` in
 # `misc.jl`), so array `StdTDist` sampling is not yet traceable — scalar sampling is.
-function _std_rand!(rng::AbstractRNG, d::StdTDist{T, <:Number}, x::AbstractArray) where {T}
+function _std_rand!(rng::AbstractRNG, d::StdTDist{T}, x::AbstractArray) where {T}
     ν = d.ν
     @trace for i in eachindex(x)
-        x[i] = _rand_tdist(rng, ν)
-    end
-    return x
-end
-function _std_rand!(rng::AbstractRNG, d::StdTDist{T, <:AbstractArray}, x::AbstractArray) where {T}
-    @trace for i in eachindex(x)
-        x[i] = _rand_tdist(rng, d.ν[i])
+        x[i] = _rand_tdist(rng, _getith(ν, i))
     end
     return x
 end

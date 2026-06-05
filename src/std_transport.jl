@@ -11,10 +11,10 @@ const _ArrayStd = Union{StdNormal, StdUniform, StdExponential, StdInverseGamma, 
 _elem_base(::StdNormal{T}, i) where {T} = StdNormal{T, 0}(())
 _elem_base(::StdUniform{T}, i) where {T} = StdUniform{T, 0}(())
 _elem_base(::StdExponential{T}, i) where {T} = StdExponential{T, 0}(())
-_elem_base(d::StdInverseGamma{T, <:Number}, i) where {T} = StdInverseGamma{T, T, 0}(d.α, ())
-_elem_base(d::StdInverseGamma{T, <:AbstractArray}, i) where {T} = StdInverseGamma{T, T, 0}(d.α[i], ())
-_elem_base(d::StdTDist{T, <:Number}, i) where {T} = StdTDist{T, T, 0}(d.ν, ())
-_elem_base(d::StdTDist{T, <:AbstractArray}, i) where {T} = StdTDist{T, T, 0}(d.ν[i], ())
+_elem_base(d::StdInverseGamma{T, <:Number}, i) where {T} = StdInverseGamma(d.α, ())
+_elem_base(d::StdInverseGamma{T, <:AbstractArray}, i) where {T} = StdInverseGamma(d.α[i], ())
+_elem_base(d::StdTDist{T, <:Number}, i) where {T} = StdTDist(d.ν, ())
+_elem_base(d::StdTDist{T, <:AbstractArray}, i) where {T} = StdTDist(d.ν[i], ())
 
 # Matching base → space (StdNormal→StdNormal, StdUniform→StdUniform) is the
 # identity: no cdf/quantile. Vectorized as a range-view + reshape, so it traces

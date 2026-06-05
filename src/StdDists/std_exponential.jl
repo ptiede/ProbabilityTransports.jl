@@ -7,13 +7,13 @@ StdExponential() = StdExponential{Float64, 0}(())
 
 # ----- log-pdf split ------------------------------------------------------
 
-@inline function _unnormed_kernel(::StdExponential, z, _)
+@inline function _unnormed_kernel(::StdExponential, z)
     return ifelse(z >= zero(z), -z, oftype(z, -Inf))
 end
 @inline _unnormed_kernel_sum(::StdExponential, z) = -sum(z)
 
 function unnormed_logpdf(d::StdExponential{T, 0}, x::Number) where {T}
-    return _unnormed_kernel(d, x, 1)
+    return _unnormed_kernel(d, x)
 end
 function unnormed_logpdf(
         d::StdExponential{T, N}, x::AbstractArray{<:Number, N}
