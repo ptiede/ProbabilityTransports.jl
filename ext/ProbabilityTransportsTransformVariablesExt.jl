@@ -35,11 +35,14 @@ PT.pullback_eltype(t::TV.AbstractTransform, ::Type{T}) where {T} = TV.inverse_el
 # inherit the core `transport`/`pullback` drivers. These delegate through the step
 # protocol (which handles scalar-in-a-vector correctly).
 PT.transport(t::TV.AbstractTransform, y) = first(PT.transport_step(t, y, firstindex(y)))
-function PT.pullback(t::TV.AbstractTransform, x)
-    y = Vector{PT.pullback_eltype(t, typeof(x))}(undef, TV.dimension(t))
+function PT.pullback!(y, t::TV.AbstractTransform, x)
     PT.pullback_step!(y, firstindex(y), t, x)
     return y
 end
+# Flat path keeps the x-dependent `pullback_eltype(t, ::Type)` (TV's `inverse_eltype` — a
+# genuine change of variables can change the type), unlike the Std-space core.
+PT.pullback(t::TV.AbstractTransform, x) =
+    PT.pullback!(Vector{PT.pullback_eltype(t, typeof(x))}(undef, TV.dimension(t)), t, x)
 
 # `transport_to` is specialized on `AbstractStdDist` in core (with a concrete-eltype
 # check); `TVFlat` has no Std reference eltype to constrain, so it gets its own method
