@@ -1,6 +1,6 @@
 # ProjectedNormal — a directional prior that concentrates in a direction (like a
 # von Mises) but, unlike von Mises, transports *exactly* to StdNormal/StdUniform/
-# StdFlat. Each direction is the 2D Gaussian `N(γ·(cos μ, sin μ), I₂)`; its angular
+# TVFlat. Each direction is the 2D Gaussian `N(γ·(cos μ, sin μ), I₂)`; its angular
 # marginal `atan(x₂, x₁)` is the projected normal, a smooth von-Mises-like density.
 # Because it is an affine shift of `StdNormal(2n)` the transport is exact and smooth
 # (no wrap boundary) — the legitimate way to get circular coordinates.
@@ -23,7 +23,7 @@ whose angular marginal is the *projected normal*, a smooth approximation to a
 around `μ`. The single-argument form takes a length-2 mean vector `ν` directly.
 
 Unlike `VonMises`/`DiagonalVonMises`, it transports **exactly** to `StdNormal()`/
-`StdUniform()`/`StdFlat()` (it is an affine shift of `StdNormal(2n)`), so it is the
+`StdUniform()`/`TVFlat()` (it is an affine shift of `StdNormal(2n)`), so it is the
 recommended circular prior when you want smooth Gaussian coordinates. Take
 `atan(x[2i], x[2i-1])` for direction `i`'s angle.
 """

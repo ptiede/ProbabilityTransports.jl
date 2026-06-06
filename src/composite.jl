@@ -46,35 +46,28 @@ function transport_step(c::TupleTransport{<:NamedTuple}, y, index)
     return NamedTuple{keys(c.transports)}(yt), index′
 end
 
-# (Under `StdFlat`, composites are a native `TV.as(...)` transform — see the TV
+# (Under `TVFlat`, composites are a native `TV.as(...)` transform — see the TV
 # extension — so `TupleTransport` only ever serves the Jacobian-free Std spaces.)
 
 # --- backward stepping (per-component section) ---
+# `Base.tail` recursion (mirroring `_transport_tuple`) — a `for`/`zip` loop over a
+# heterogeneous tuple infers the element as a union and dynamically dispatches
+# `pullback_step!` (type-unstable `index`), which also blocks Reactant tracing.
+
+_pullback_tuple!(y, index, ::Tuple{}, ::Tuple{}) = index
+function _pullback_tuple!(y, index, ts::Tuple, xs::Tuple)
+    index1 = pullback_step!(y, index, first(ts), first(xs))
+    return _pullback_tuple!(y, index1, Base.tail(ts), Base.tail(xs))
+end
 
 function pullback_step!(y, index, c::TupleTransport{<:Tuple}, x::Tuple)
-    @assert length(c.transports) == length(x)
-    for (t, xi) in zip(c.transports, x)
-        index = pullback_step!(y, index, t, xi)
-    end
-    return index
+    return _pullback_tuple!(y, index, c.transports, x)
 end
 
 function pullback_step!(y, index, c::TupleTransport{<:NamedTuple}, x::NamedTuple)
     xv = NamedTuple{keys(c.transports)}(x)   # reorder / select to match the transports
-    for (t, xi) in zip(values(c.transports), values(xv))
-        index = pullback_step!(y, index, t, xi)
-    end
-    return index
+    return _pullback_tuple!(y, index, values(c.transports), values(xv))
 end
 
-# --- pullback element type (type-based, promote over leaves) ---
-
-function pullback_eltype(c::TupleTransport{<:Tuple}, ::Type{T}) where {T <: Tuple}
-    ets = map((t, ft) -> pullback_eltype(t, ft), c.transports, Tuple(fieldtypes(T)))
-    return reduce(promote_type, ets; init = Bool)
-end
-
-function pullback_eltype(c::TupleTransport{<:NamedTuple}, ::Type{NT}) where {NT <: NamedTuple}
-    ets = map((t, ft) -> pullback_eltype(t, ft), values(c.transports), Tuple(fieldtypes(NT)))
-    return reduce(promote_type, ets; init = Bool)
-end
+# (`pullback_eltype` falls to the generic `AbstractTransport` method off `space(c)`: the
+# latent buffer's eltype is the reference space's, so no per-leaf promotion is needed.)

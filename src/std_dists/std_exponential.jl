@@ -7,10 +7,10 @@ StdExponential() = StdExponential{Float64, 0}(())
 
 # ----- log-pdf split ------------------------------------------------------
 
-@inline function _unnormed_kernel(::StdExponential, z)
-    return ifelse(z >= zero(z), -z, oftype(z, -Inf))
+@inline function _unnormed_kernel(d::StdExponential, z)
+    return ifelse(Dists.insupport(d, z), -z, oftype(z, -Inf))
 end
-@inline _unnormed_kernel_sum(::StdExponential, z) = -sum(z)
+@inline _unnormed_kernel_sum(d::StdExponential, z) = ifelse(Dists.insupport(d, z), -sum(z), oftype(zero(eltype(z)), -Inf))
 
 function unnormed_logpdf(d::StdExponential{T, 0}, x::Number) where {T}
     return _unnormed_kernel(d, x)
@@ -24,16 +24,13 @@ end
 @inline lognorm(d::StdExponential) = zero(eltype(d))
 
 
-# ----- sampling -----------------------------------------------------------
+# ----- sampling 
 
-# `randexp(rng, T)` (not `T(randexp(rng))`): see `std_normal.jl` — the typed draw
-# avoids the `T(::TracedRNumber)` coercion that has no method under Reactant.
 Random.rand(rng::AbstractRNG, ::StdExponential{T, 0}) where {T} = randexp(rng, T)
 _std_rand!(rng::AbstractRNG, ::StdExponential, x::AbstractArray) = randexp!(rng, x)
 
 
-# ----- support / moments --------------------------------------------------
-
+# ----- support / moments 
 Dists.insupport(::StdExponential, x::Number) = x >= 0
 # `<:Real` overload breaks ambiguity with Distributions' generic
 # `insupport(::ContinuousUnivariateDistribution, ::Real)`.

@@ -13,7 +13,7 @@ using LinearAlgebra: norm
 
 # ----- TransformVariables transforms ARE transport nodes --------------------
 #
-# Under `StdFlat`, *every* node is a `TV.AbstractTransform` (the `transport_node`
+# Under `TVFlat`, *every* node is a `TV.AbstractTransform` (the `transport_node`
 # methods below cover composites, clamped values and pushforwards too), so the whole
 # flat path runs on TV's own machinery — no core Jacobian plumbing is involved. A
 # `TV.AbstractTransform` cannot subtype our `AbstractTransport` (no retroactive
@@ -41,6 +41,16 @@ function PT.pullback(t::TV.AbstractTransform, x)
     return y
 end
 
+# `transport_to` is specialized on `AbstractStdDist` in core (with a concrete-eltype
+# check); `TVFlat` has no Std reference eltype to constrain, so it gets its own method
+# here. `basemeasure(::TVFlat, n)` is `nothing`, so the flat density path takes over.
+function PT.transport_to(dist, space::PT.TVFlat)
+    node = PT.transport_node(dist, space)
+    n = PT.dimension(node)
+    stop = PT.basemeasure(space, n)
+    return PT.TransportedDistribution(node, dist, stop)
+end
+
 # Flat-space density. `stop === nothing`, and the transport node is always a TV
 # transform, so the genuine change of variables comes straight from TV's `LogJac`
 # (`transform_with` via the index protocol handles a scalar transform fed a 1-vector).
@@ -53,9 +63,9 @@ end
 
 # ----- per-distribution flat building blocks (the asflat dispatch table) -----
 #
-# Each method is more specific (on the StdFlat space) than the core `transport_node`
+# Each method is more specific (on the TVFlat space) than the core `transport_node`
 # methods, so there is no ambiguity. Composites, clamped values and pushforwards are
-# handled below too, so under `StdFlat` the whole tree is a single TV transform.
+# handled below too, so under `TVFlat` the whole tree is a single TV transform.
 # `stop === nothing` makes `logpdf == logpdf_fwd` for the flat space.
 
 function _interval(d::Dists.UnivariateDistribution)
@@ -65,42 +75,42 @@ function _interval(d::Dists.UnivariateDistribution)
     return as(Real, lb, ub)
 end
 
-PT.transport_node(d::Dists.ContinuousUnivariateDistribution, ::PT.StdFlat) = _interval(d)
-PT.transport_node(d::Dists.AffineDistribution, ::PT.StdFlat) = _interval(d)
-PT.transport_node(d::Dists.Dirichlet, ::PT.StdFlat) = TV.UnitSimplex(length(d.alpha))
-PT.transport_node(d::Dists.MvNormal, ::PT.StdFlat) = as(Vector, length(d))
-PT.transport_node(d::Dists.MvLogNormal, ::PT.StdFlat) = as(Vector, as(Real, 0, TV.∞), length(d))
-PT.transport_node(d::Dists.Product, ::PT.StdFlat) = as(Vector, _interval(first(d.v)), length(d.v))
+PT.transport_node(d::Dists.ContinuousUnivariateDistribution, ::PT.TVFlat) = _interval(d)
+PT.transport_node(d::Dists.AffineDistribution, ::PT.TVFlat) = _interval(d)
+PT.transport_node(d::Dists.Dirichlet, ::PT.TVFlat) = TV.UnitSimplex(length(d.alpha))
+PT.transport_node(d::Dists.MvNormal, ::PT.TVFlat) = as(Vector, length(d))
+PT.transport_node(d::Dists.MvLogNormal, ::PT.TVFlat) = as(Vector, as(Real, 0, TV.∞), length(d))
+PT.transport_node(d::Dists.Product, ::PT.TVFlat) = as(Vector, _interval(first(d.v)), length(d.v))
 
 # array-shaped Std* bases: 0-dim → scalar interval; N ≥ 1 → unconstrained array.
-_stdflat(d, inner) = isempty(size(d)) ? inner : as(Array, inner, size(d)...)
-PT.transport_node(d::PT.StdNormal, ::PT.StdFlat) = _stdflat(d, as(Real, -TV.∞, TV.∞))
-PT.transport_node(d::PT.StdExponential, ::PT.StdFlat) = _stdflat(d, as(Real, 0, TV.∞))
-PT.transport_node(d::PT.StdInverseGamma, ::PT.StdFlat) = _stdflat(d, as(Real, 0, TV.∞))
-PT.transport_node(d::PT.StdTDist, ::PT.StdFlat) = _stdflat(d, as(Real, -TV.∞, TV.∞))
-PT.transport_node(d::PT.StdUniform, ::PT.StdFlat) = _stdflat(d, as(Real, 0, 1))
+_TVFlat(d, inner) = isempty(size(d)) ? inner : as(Array, inner, size(d)...)
+PT.transport_node(d::PT.StdNormal, ::PT.TVFlat) = _TVFlat(d, as(Real, -TV.∞, TV.∞))
+PT.transport_node(d::PT.StdExponential, ::PT.TVFlat) = _TVFlat(d, as(Real, 0, TV.∞))
+PT.transport_node(d::PT.StdInverseGamma, ::PT.TVFlat) = _TVFlat(d, as(Real, 0, TV.∞))
+PT.transport_node(d::PT.StdTDist, ::PT.TVFlat) = _TVFlat(d, as(Real, -TV.∞, TV.∞))
+PT.transport_node(d::PT.StdUniform, ::PT.TVFlat) = _TVFlat(d, as(Real, 0, 1))
 
 # Truncated: flat transform is the constrained interval implied by the bounds.
-PT.transport_node(d::PT.Truncated{<:Any, <:Real, <:Real}, ::PT.StdFlat) = as(Real, d.lower, d.upper)
-PT.transport_node(d::PT.Truncated{<:Any, <:Real, Nothing}, ::PT.StdFlat) = as(Real, d.lower, TV.∞)
-PT.transport_node(d::PT.Truncated{<:Any, Nothing, <:Real}, ::PT.StdFlat) = as(Real, -TV.∞, d.upper)
-PT.transport_node(d::PT.Truncated{<:Any, Nothing, Nothing}, ::PT.StdFlat) = as(Real, -TV.∞, TV.∞)
+PT.transport_node(d::PT.Truncated{<:Any, <:Real, <:Real}, ::PT.TVFlat) = as(Real, d.lower, d.upper)
+PT.transport_node(d::PT.Truncated{<:Any, <:Real, Nothing}, ::PT.TVFlat) = as(Real, d.lower, TV.∞)
+PT.transport_node(d::PT.Truncated{<:Any, Nothing, <:Real}, ::PT.TVFlat) = as(Real, -TV.∞, d.upper)
+PT.transport_node(d::PT.Truncated{<:Any, Nothing, Nothing}, ::PT.TVFlat) = as(Real, -TV.∞, TV.∞)
 
 # ----- composites: a native TV transform tuple ------------------------------
 # Tuples / NamedTuples / NamedDist / TupleDist become a `TV.as(...)` so the whole flat
 # tree is one TV transform (vs. the core `TupleTransport`, which carries no Jacobian).
 # The `Tuple{}` / `NamedTuple{()}` methods resolve the ambiguity with the core empties.
-PT.transport_node(t::Tuple, s::PT.StdFlat) = TV.as(map(x -> PT.transport_node(x, s), t))
-PT.transport_node(t::Tuple{}, ::PT.StdFlat) = TV.as(())
-PT.transport_node(nt::NamedTuple, s::PT.StdFlat) = TV.as(map(x -> PT.transport_node(x, s), nt))
-PT.transport_node(nt::NamedTuple{()}, ::PT.StdFlat) = TV.as((;))
-PT.transport_node(d::PT.TupleDist, s::PT.StdFlat) = PT.transport_node(getfield(d, :dists), s)
-function PT.transport_node(d::PT.NamedDist{N}, s::PT.StdFlat) where {N}
+PT.transport_node(t::Tuple, s::PT.TVFlat) = TV.as(map(x -> PT.transport_node(x, s), t))
+PT.transport_node(t::Tuple{}, ::PT.TVFlat) = TV.as(())
+PT.transport_node(nt::NamedTuple, s::PT.TVFlat) = TV.as(map(x -> PT.transport_node(x, s), nt))
+PT.transport_node(nt::NamedTuple{()}, ::PT.TVFlat) = TV.as((;))
+PT.transport_node(d::PT.TupleDist, s::PT.TVFlat) = PT.transport_node(getfield(d, :dists), s)
+function PT.transport_node(d::PT.NamedDist{N}, s::PT.TVFlat) where {N}
     return TV.as(NamedTuple{N}(map(x -> PT.transport_node(x, s), getfield(d, :dists))))
 end
 
 # ----- clamped value: TV ships a 0-dimensional constant transform ------------
-PT.transport_node(d::PT.DeltaDist, ::PT.StdFlat) = TV.Constant(d.x0)
+PT.transport_node(d::PT.DeltaDist, ::PT.TVFlat) = TV.Constant(d.x0)
 
 # ----- pushforward of a flat base by an invertible map ----------------------
 # Distributions that are the law of `f(Z)` for an invertible `f` (a `ChangesOfVariables`
@@ -126,13 +136,13 @@ function TV.inverse_at!(x, index, t::PushforwardTransform, y)
 end
 
 # ProjectedNormal: an affine *shift* (scale 1) of the 2n flat standard normals.
-function PT.transport_node(d::PT.ProjectedNormal, s::PT.StdFlat)
+function PT.transport_node(d::PT.ProjectedNormal, s::PT.TVFlat)
     ν = d.ν
     return PushforwardTransform(PT.ScaleShift(ν, one(eltype(ν))), PT.transport_node(PT.StdNormal(length(ν)), s))
 end
 
 # PushforwardDistribution: `f(base)` — wrap the base's flat transform with `f`.
-PT.transport_node(d::PT.PushforwardDistribution, s::PT.StdFlat) =
+PT.transport_node(d::PT.PushforwardDistribution, s::PT.TVFlat) =
     PushforwardTransform(d.f, PT.transport_node(d.base, s))
 
 # ----- angular TV transforms (ported from VLBIImagePriors; primal only) -----
@@ -261,11 +271,11 @@ PT.angle_transform() = AngleTransform()
 PT.spherical_unit_vector(N::Integer) = SphericalUnitVector{N}()
 
 # Flat transport for the angular distributions: each angle is an `AngleTransform`.
-PT.transport_node(d::PT.DiagonalVonMises, ::PT.StdFlat) = as(Vector, AngleTransform(), length(d))
-PT.transport_node(::PT.DiagonalVonMises{<:Real, <:Real, <:Real}, ::PT.StdFlat) = AngleTransform()
-PT.transport_node(d::PT.WrappedUniform, ::PT.StdFlat) = as(Vector, AngleTransform(), length(d))
-PT.transport_node(::PT.WrappedUniform{<:Real}, ::PT.StdFlat) = AngleTransform()
+PT.transport_node(d::PT.DiagonalVonMises, ::PT.TVFlat) = as(Vector, AngleTransform(), length(d))
+PT.transport_node(::PT.DiagonalVonMises{<:Real, <:Real, <:Real}, ::PT.TVFlat) = AngleTransform()
+PT.transport_node(d::PT.WrappedUniform, ::PT.TVFlat) = as(Vector, AngleTransform(), length(d))
+PT.transport_node(::PT.WrappedUniform{<:Real}, ::PT.TVFlat) = AngleTransform()
 
-PT.basemeasure(::PT.StdFlat, ::Int) = nothing
+PT.basemeasure(::PT.TVFlat, ::Int) = nothing
 
 end # module

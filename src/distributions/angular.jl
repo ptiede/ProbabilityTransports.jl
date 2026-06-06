@@ -104,7 +104,7 @@ function Dists._rand!(rng::AbstractRNG, d::DiagonalVonMises, x::AbstractVector)
     # `@trace for` mirrors the Std* samplers: a `stablehlo` loop under Reactant,
     # a plain loop otherwise.
     @trace for i in eachindex(x)
-        x[i] = _rand_vonmises(rng, d.μ[i], d.κ[i])
+        _rsetindex!(x, _rand_vonmises(rng, _rgetindex(d.μ, i), _rgetindex(d.κ, i)), i)
     end
     return x
 end
@@ -167,7 +167,7 @@ function _no_circular_transport(d, space)
             "Cannot transport the circular distribution `$(nameof(typeof(d)))` to " *
             "`$(nameof(typeof(space)))`: there is no measure-preserving map from a " *
             "circle to the line, so the transported variables would not be " *
-            "$(nameof(typeof(space)))-distributed. Use `StdFlat()` (a smooth ℝⁿ " *
+            "$(nameof(typeof(space)))-distributed. Use `TVFlat()` (a smooth ℝⁿ " *
             "embedding via `AngleTransform`), or replace the prior with a projected-" *
             "normal prior, whose transport to `StdNormal()` is exact.",
         ),

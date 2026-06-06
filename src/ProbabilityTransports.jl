@@ -27,28 +27,41 @@ using ReactantCore: @trace, within_compile, promote_to_traced
 
 using Bessels: besseli0x
 
+export StdNormal, StdUniform, StdExponential, StdTDist, StdInverseGamma, TVFlat
+export NamedDist, TupleDist, DiagonalVonMises, WrappedUniform, DeltaDist, ProjectedNormal
+export transport_to, transport_node, transport, transport_and_logdensity, pullback, pullback!, logpdf_fwd, dimension
+export TransportedDistribution, PushforwardDistribution
+export angle_transform, spherical_unit_vector
+
+
 # Reactant-safe scalar indexing helpers. Plain indexing on CPU; a Reactant
 # extension can specialize these to traced get/setindex when needed.
-@inline _rgetindex(x, i...) = @inbounds x[i...]
-@inline _rsetindex!(x, v, i...) = (@inbounds setindex!(x, v, i...); v)
+Base.@propagate_inbounds _rgetindex(x, i...) = x[i...]
+Base.@propagate_inbounds _rsetindex!(x, v, i...) = (setindex!(x, v, i...); v)
+function promote_index(i)
+    if within_compile()
+        return promote_to_traced(i)
+    else
+        return i
+    end
+end
+
+# Interface
+include("transport.jl")
+include("spaces.jl")
+include("std_dists/std_dists.jl")
+
 
 # ----- standard reference distributions ("spaces") -----------------------
-include("std_dists.jl")
 
 # ----- transport engine ---------------------------------------------------
-include("spaces.jl")
-include("transport.jl")
 include("pushforward.jl")
-include("pushforward_distribution.jl")
 include("composite.jl")
-include("namedist.jl")
 include("specialized.jl")
 include("std_transport.jl")
-include("angular.jl")
-include("truncated.jl")
-include("delta.jl")
-include("projected_normal.jl")
 include("transported.jl")
+include("distributions/distributions.jl")
+
 
 # ----- constructors for transforms that live in the TransformVariables ext --
 # These return `TV.VectorTransform`s (`AngleTransform`, `SphericalUnitVector{N}`)
@@ -72,10 +85,5 @@ A TransformVariables transform mapping `N+1` reals to a unit vector on the
 """
 function spherical_unit_vector end
 
-export StdNormal, StdUniform, StdExponential, StdTDist, StdInverseGamma, StdFlat
-export NamedDist, TupleDist, DiagonalVonMises, WrappedUniform, DeltaDist, ProjectedNormal
-export transport_to, transport_node, transport, transport_and_logdensity, pullback, logpdf_fwd, dimension
-export TransportedDistribution, PushforwardDistribution
-export angle_transform, spherical_unit_vector
 
 end # module

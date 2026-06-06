@@ -1,0 +1,6 @@
+include("angular.jl")
+include("delta.jl")
+include("namedist.jl")
+include("projected_normal.jl")
+include("pushforward_distribution.jl")
+include("truncated.jl")

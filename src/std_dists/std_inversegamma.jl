@@ -7,10 +7,12 @@ struct StdInverseGamma{T, Tα, N, Tl} <: AbstractStdDist{T, N}
     α::Tα
     lognorm::Tl
     dims::Dims{N}
-    # Precompute the normalization because it is expensive
+    # Precompute the normalization because it is expensive. Store `α` as-is
+    # (`Tα = typeof(α)` — scalar or array); derive the float output eltype `T` from its
+    # element type so an integer `α` doesn't make `T = Int`.
     function StdInverseGamma(α::Union{Number, AbstractArray}, dims::Dims{N}) where {N}
-        Tα = eltype(α)
-        T = float(Tα)
+        Tα = typeof(α)
+        T = float(eltype(α))
         lognorm = _lognorm_igamma(α, prod(dims))
         return new{T, Tα, N, typeof(lognorm)}(α, lognorm, dims)
     end
@@ -58,18 +60,11 @@ end
 function Random.rand(rng::AbstractRNG, d::StdInverseGamma{T, <:Number, 0}) where {T}
     return inv(_rand_gamma(rng, d.α))
 end
-# NOTE: see `std_tdist.jl` — the array sampler's per-element loop is CPU-correct but
-# not yet Reactant-traceable (the loop does not thread the RNG). Scalar sampling is.
-function _std_rand!(rng::AbstractRNG, d::StdInverseGamma{T, <:Number}, x::AbstractArray) where {T}
+
+function _std_rand!(rng::AbstractRNG, d::StdInverseGamma{T}, x::AbstractArray) where {T}
     α = d.α
     @trace for i in eachindex(x)
-        x[i] = inv(_rand_gamma(rng, α))
-    end
-    return x
-end
-function _std_rand!(rng::AbstractRNG, d::StdInverseGamma{T, <:AbstractArray}, x::AbstractArray) where {T}
-    @trace for i in eachindex(x)
-        x[i] = inv(_rand_gamma(rng, d.α[i]))
+        _rsetindex!(x, inv(_rand_gamma(rng, _getith(α, i))), i)
     end
     return x
 end

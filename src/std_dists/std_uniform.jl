@@ -11,29 +11,26 @@ StdUniform{T}(dims::Int...) where {T} = StdUniform{T}(dims)
 
 # ----- log-pdf split ------------------------------------------------------
 
-@inline function _unnormed_kernel(::StdUniform, z, _)
-    return ifelse((z >= zero(z)) & (z <= one(z)), zero(z), oftype(z, -Inf))
+@inline function _unnormed_kernel(d::StdUniform, z)
+    return ifelse(Dists.insupport(d, z), zero(z), oftype(z, -Inf))
 end
 # sum the branchless per-element kernel: 0 if every element ∈ [0,1], else -Inf
 # (uses `ifelse`, so it still traces under Reactant).
-# `init` keeps the 0-element case (a 0-dim reference, e.g. a clamped `DeltaDist`) at 0.
-@inline _unnormed_kernel_sum(d::StdUniform, z) =
-    sum(zi -> _unnormed_kernel(d, zi, 1), z; init = zero(eltype(z)))
+@inline _unnormed_kernel_sum(d::StdUniform, z) = sum(Base.Fix1(_unnormed_kernel, d), z)
 
-unnormed_logpdf(d::StdUniform{T, 0}, x::Number) where {T} = _unnormed_kernel(d, x, 1)
+unnormed_logpdf(d::StdUniform{T, 0}, x::Number) where {T} = _unnormed_kernel(d, x)
 function unnormed_logpdf(d::StdUniform{T, N}, x::AbstractArray{<:Number, N}) where {T, N}
     return _unnormed_kernel_sum(d, x)
 end
-
 @inline lognorm(d::StdUniform) = zero(eltype(d))
 
-# ----- sampling -----------------------------------------------------------
+# ----- sampling 
 
 Random.rand(rng::AbstractRNG, ::StdUniform{T, 0}) where {T} = rand(rng, T)
 _std_rand!(rng::AbstractRNG, ::StdUniform, x::AbstractArray) = rand!(rng, x)
 
 
-# ----- support / moments --------------------------------------------------
+# ----- support / moments 
 
 Dists.insupport(::StdUniform, x::Number) = (0 <= x <= 1)
 # `<:Real` overload breaks ambiguity with Distributions' generic
@@ -51,10 +48,16 @@ Dists.mean(d::StdUniform) = fill(eltype(d)(0.5), size(d))
 Dists.var(d::StdUniform) = fill(eltype(d)(1) / eltype(d)(12), size(d))
 
 
-# ----- cdf / quantile -----------------------------------------------------
+# ----- cdf / quantile 
 
 @inline _std_cdf(::StdUniform, x) = clamp(x, zero(x), one(x))
 @inline _std_quantile(::StdUniform, p) = p
 
 Dists.cdf(d::StdUniform{T, 0}, x::Number) where {T} = _std_cdf(d, x)
 Dists.quantile(d::StdUniform{T, 0}, p::Number) where {T} = _std_quantile(d, p)
+
+# ----- transport interface
+space_cdf(::StdUniform, y) = clamp(y, zero(y), one(y))
+space_quantile(::StdUniform, u) = u
+space_logpdf(::StdUniform, y) = zero(y)
+space_dimension(::Type{<:StdUniform}) = 1

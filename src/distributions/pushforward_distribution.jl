@@ -139,6 +139,6 @@ end
 
 # Transport (Std spaces): wrap the base's transport in `f`. For `base === space` the
 # inner is the matching-base identity, so this is `f` over an identity (no cdf/quantile).
-# (`StdFlat` is handled in the TV extension, where `f` wraps the base's TV transform.)
+# (`TVFlat` is handled in the TV extension, where `f` wraps the base's TV transform.)
 transport_node(d::PushforwardDistribution, space) =
     PushforwardTransport(d.f, transport_node(d.base, space))

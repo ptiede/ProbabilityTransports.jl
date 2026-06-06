@@ -36,7 +36,15 @@ dimension(::ConstantTransport) = 0
 transport_node(d::DeltaDist, space) = ConstantTransport(d.x0)
 
 transport_step(c::ConstantTransport, y, index) = (c.value, index)
-# (Under `StdFlat`, a clamped value is `TV.Constant` — see the TV extension — so this
+# (Under `TVFlat`, a clamped value is `TV.Constant` — see the TV extension — so this
 # core node only serves the Std spaces.)
 pullback_step!(y, index, ::ConstantTransport, x) = index
-pullback_eltype(::ConstantTransport, ::Type) = Bool
+pullback_eltype(::ConstantTransport) = Bool
+
+# A standalone clamped value transports to a 0-dimensional latent reference, whose latent
+# log-density is identically 0 (no coordinates to score). Resolve it here, on the constant
+# node, rather than letting an empty reference reach a per-space reducer — that keeps the
+# `StdUniform`/`StdExponential`/… kernels free of a defensive empty-`sum` `init`. (The `stop`
+# bound excludes the `TVFlat`/`Nothing` reference, avoiding ambiguity with the flat method.)
+Dists.logpdf(d::TransportedDistribution{<:ConstantTransport, <:Any, <:AbstractStdDist}, y::AbstractVector) =
+    zero(eltype(y))

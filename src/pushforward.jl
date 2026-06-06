@@ -76,7 +76,7 @@ function transport_step(c::PushforwardTransport, y, index)
     return c.f(z), index′
 end
 
-# (Under `StdFlat`, a pushforward is a TV `PushforwardTransform` — see the TV extension
+# (Under `TVFlat`, a pushforward is a TV `PushforwardTransform` — see the TV extension
 # — so this core node only serves the Jacobian-free Std spaces.)
 
 function pullback_step!(y, index, c::PushforwardTransport, x)
@@ -84,7 +84,8 @@ function pullback_step!(y, index, c::PushforwardTransport, x)
     return pullback_step!(y, index, c.inner, z)
 end
 
-pullback_eltype(c::PushforwardTransport, ::Type{T}) where {T} = pullback_eltype(c.inner, T)
+# (`pullback_eltype` falls to the generic `AbstractTransport` method off `space(c)`, which
+# for a `PushforwardTransport` delegates to `space(c.inner)`.)
 
 # ----- identity inner nodes -----------------------------------------------
 # Used by the cheap analytic specializations: when the base of an affine
@@ -99,4 +100,3 @@ function transport_step(c::ScalarIdentity, y, index)
     return _rgetindex(y, index), index + 1
 end
 pullback_step!(y, index, ::ScalarIdentity, z::Real) = (_rsetindex!(y, z, index); index + 1)
-pullback_eltype(::ScalarIdentity, ::Type{T}) where {T} = _ensure_float(eltype(T))

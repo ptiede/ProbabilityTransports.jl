@@ -208,12 +208,12 @@ fd_fwd(dto, start, y) = logpdf(start, transport(dto, y)) + fd_logjac(dto, y)
         for (μ, γ) in [(0.0, 3.0), (π / 3, 1.5), (0.0, 0.0)]
             d = ProjectedNormal(μ, γ)
             @test length(d) == 2
-            for S in (StdNormal(), StdUniform(), StdFlat())
+            for S in (StdNormal(), StdUniform(), TVFlat())
                 dto = transport_to(d, S)
                 @test dimension(dto) == 2
-                y = S === StdFlat() ? randn(rng, 2) : rand(rng, dto)
+                y = S === TVFlat() ? randn(rng, 2) : rand(rng, dto)
                 x = transport(dto, y)
-                if S !== StdFlat()
+                if S !== TVFlat()
                     @test isapprox(fd_fwd(dto, d, y), logpdf_fwd(dto, y); atol = 1e-5)   # EXACT
                 end
                 @test pullback(dto, x) ≈ y
@@ -241,12 +241,12 @@ fd_fwd(dto, start, y) = logpdf(start, transport(dto, y)) + fd_logjac(dto, y)
         for i in eachindex(μv)
             @test atan(mean(d)[2i], mean(d)[2i - 1]) ≈ μv[i]
         end
-        for S in (StdNormal(), StdUniform(), StdFlat())
+        for S in (StdNormal(), StdUniform(), TVFlat())
             dto = transport_to(d, S)
             @test dimension(dto) == 2length(μv)
-            y = S === StdFlat() ? randn(rng, length(d)) : rand(rng, dto)
+            y = S === TVFlat() ? randn(rng, length(d)) : rand(rng, dto)
             x = transport(dto, y)
-            if S !== StdFlat()
+            if S !== TVFlat()
                 @test isapprox(fd_fwd(dto, d, y), logpdf_fwd(dto, y); atol = 1e-5)   # EXACT
             end
             @test pullback(dto, x) ≈ y
@@ -261,7 +261,7 @@ fd_fwd(dto, start, y) = logpdf(start, transport(dto, y)) + fd_logjac(dto, y)
         rng = MersenneTwister(11)
         # univariate: scalar TV transform, vector-in/scalar-out convention
         for D in (Gamma(2.3, 1.1), Normal(1.0, 2.0), LogNormal(0.0, 1.0), Beta(2.0, 3.0))
-            dto = transport_to(D, StdFlat())
+            dto = transport_to(D, TVFlat())
             @test dimension(dto) == 1
             y = randn(rng)
             x_pt = transport(dto, [y])
@@ -271,7 +271,7 @@ fd_fwd(dto, start, y) = logpdf(start, transport(dto, y)) + fd_logjac(dto, y)
         end
         # multivariate: matches asflat shape; round-trips
         for D in (MvNormal([1.0, -1.0], [2.0 0.5; 0.5 1.0]), Dirichlet([2.0, 3.0, 1.5]))
-            dto = transport_to(D, StdFlat())
+            dto = transport_to(D, TVFlat())
             y = randn(rng, dimension(dto))
             x = transport(dto, y)
             @test logpdf(dto, y) ≈ logpdf_fwd(dto, y)
@@ -280,7 +280,7 @@ fd_fwd(dto, start, y) = logpdf(start, transport(dto, y)) + fd_logjac(dto, y)
         end
         # nested NamedDist with a Dirichlet leaf
         nd = NamedDist(a = Normal(), b = Gamma(2.0), c = Dirichlet([1.0, 2.0, 3.0]))
-        dto = transport_to(nd, StdFlat())
+        dto = transport_to(nd, TVFlat())
         y = randn(rng, dimension(dto))
         x = transport(dto, y)
         @test x isa NamedTuple{(:a, :b, :c)}
@@ -304,9 +304,9 @@ fd_fwd(dto, start, y) = logpdf(start, transport(dto, y)) + fd_logjac(dto, y)
         # transport over all three spaces; check internal consistency
         for d in (1.0 + 2.0 * StdNormal(), 2.0 + 3.0 * StdUniform(), 2.0 * StdExponential(),
                   1.0 + 2.0 * StdTDist(5.0), 3.0 * StdInverseGamma(2.5))
-            for S in (StdNormal(), StdUniform(), StdFlat())
+            for S in (StdNormal(), StdUniform(), TVFlat())
                 dto = transport_to(d, S)
-                y = S === StdFlat() ? randn(rng, dimension(dto)) : rand(rng, dto)
+                y = S === TVFlat() ? randn(rng, dimension(dto)) : rand(rng, dto)
                 x = transport(dto, y)
                 @test isapprox(fd_fwd(dto, d, y), logpdf_fwd(dto, y); atol = 1e-5)
                 @test pullback(dto, x) ≈ y
@@ -343,6 +343,69 @@ fd_fwd(dto, start, y) = logpdf(start, transport(dto, y)) + fd_logjac(dto, y)
         @test last(PT.with_logabsdet_jacobian(g, ones(3))) ≈ log(2) + log(3) + log(4)
     end
 
+    @testset "array-parameter StdTDist / StdInverseGamma" begin
+        # Regression: the array-parameter path was unconstructible — the field type was set
+        # from `eltype(param)` instead of `typeof(param)`, so a vector param failed to
+        # convert — and therefore went entirely untested. Exercise construction, the
+        # per-element logpdf split, sampling, moments, and the cdf/quantile kernels.
+        rng = MersenneTwister(123)
+
+        @testset "construction, shape, eltype" begin
+            for d in (StdTDist([5.0, 8.0, 12.0]), StdInverseGamma([2.5, 3.0, 4.0]))
+                @test size(d) == (3,)
+                @test length(d) == 3
+                @test eltype(d) == Float64
+            end
+            @test size(StdInverseGamma(fill(3.0, 2, 2))) == (2, 2)
+            # integer params still yield a float output eltype (not Int)
+            @test eltype(StdTDist([5, 8])) == Float64
+            @test eltype(StdInverseGamma([2, 3])) == Float64
+        end
+
+        @testset "logpdf == Σ per-element reference, and the unnormed/lognorm split" begin
+            νs = [5.0, 8.0, 12.0]; αs = [2.5, 3.0, 4.0]
+            dt = StdTDist(νs); di = StdInverseGamma(αs)
+            x = [0.3, -0.7, 1.1]; z = [0.4, 0.9, 1.7]
+            @test logpdf(dt, x) ≈ sum(logpdf(TDist(ν), xi) for (ν, xi) in zip(νs, x))
+            @test logpdf(di, z) ≈ sum(logpdf(InverseGamma(α, 1.0), zi) for (α, zi) in zip(αs, z))
+            @test logpdf(dt, x) ≈ PT.unnormed_logpdf(dt, x) + PT.lognorm(dt)
+            @test logpdf(di, z) ≈ PT.unnormed_logpdf(di, z) + PT.lognorm(di)
+        end
+
+        @testset "moments match the per-element reference" begin
+            αs = [3.0, 4.0, 5.0]; di = StdInverseGamma(αs)   # α>2 ⇒ finite mean & var
+            @test mean(di) ≈ [mean(InverseGamma(α, 1.0)) for α in αs]
+            @test var(di) ≈ [var(InverseGamma(α, 1.0)) for α in αs]
+            νs = [6.0, 9.0, 12.0]; dt = StdTDist(νs)          # ν>2 ⇒ zero mean, finite var
+            @test mean(dt) ≈ zeros(3)
+            @test var(dt) ≈ [ν / (ν - 2) for ν in νs]
+        end
+
+        @testset "in-place sampler fills distinct per-element draws" begin
+            di = StdInverseGamma([3.0, 4.0, 5.0])
+            x = zeros(3)
+            Distributions._rand!(rng, di, x)
+            @test all(>(0), x)
+            @test length(unique(x)) == 3        # guards the old single-draw `x .=` bug
+        end
+
+        @testset "sampling mean converges to the analytic mean" begin
+            n = 100_000
+            di = StdInverseGamma([3.0, 4.0, 5.0])
+            Xi = rand(rng, di, n)
+            @test vec(sum(Xi; dims = 2)) ./ n ≈ mean(di) rtol = 0.05
+            dt = StdTDist([8.0, 10.0, 12.0])
+            Xt = rand(rng, dt, n)
+            @test all(<(0.05), abs.(vec(sum(Xt; dims = 2)) ./ n))
+        end
+
+        @testset "element-wise cdf/quantile kernels round-trip" begin
+            for α in (2.5, 3.0, 4.0), z in (0.4, 0.9, 1.7)
+                @test PT._ig_elem_quantile(α, PT._ig_elem_cdf(α, z)) ≈ z
+            end
+        end
+    end
+
     @testset "Truncated (Reactant-friendly), matches Distributions.truncated" begin
         rng = MersenneTwister(13)
         cases = [
@@ -363,9 +426,9 @@ fd_fwd(dto, start, y) = logpdf(start, transport(dto, y)) + fd_logjac(dto, y)
         end
         # transport over all three spaces (Truncated has quantile → generic scalar path)
         d = PT.Truncated(Normal(), -1.0, 2.0)
-        for S in (StdNormal(), StdUniform(), StdFlat())
+        for S in (StdNormal(), StdUniform(), TVFlat())
             dto = transport_to(d, S)
-            y = S === StdFlat() ? randn(rng, dimension(dto)) : rand(rng, dto)
+            y = S === TVFlat() ? randn(rng, dimension(dto)) : rand(rng, dto)
             x = transport(dto, y)
             xv = x isa AbstractArray ? x[1] : x
             @test -1.0 <= xv <= 2.0
@@ -395,8 +458,8 @@ fd_fwd(dto, start, y) = logpdf(start, transport(dto, y)) + fd_logjac(dto, y)
             @test isapprox(atan(sum(sin, ours), sum(cos, ours)), μ; atol = 0.02)
         end
 
-        # StdFlat: AngleTransform per angle (2 reals -> 1 angle); section, not bijection
-        dto = transport_to(d, StdFlat())
+        # TVFlat: AngleTransform per angle (2 reals -> 1 angle); section, not bijection
+        dto = transport_to(d, TVFlat())
         @test dimension(dto) == 4
         y = randn(rng, 4)
         x = transport(dto, y)
@@ -413,7 +476,7 @@ fd_fwd(dto, start, y) = logpdf(start, transport(dto, y)) + fd_logjac(dto, y)
 
         # WrappedUniform flat
         wu = WrappedUniform(2π, 3)
-        dtw = transport_to(wu, StdFlat())
+        dtw = transport_to(wu, TVFlat())
         @test dimension(dtw) == 6
         yw = randn(rng, 6)
         xw = transport(dtw, yw)
@@ -425,7 +488,7 @@ fd_fwd(dto, start, y) = logpdf(start, transport(dto, y)) + fd_logjac(dto, y)
     @testset "DeltaDist (clamped parameter, 0-dim)" begin
         rng = MersenneTwister(15)
         # standalone: consumes no latent coordinates, always returns x0
-        for S in (StdNormal(), StdUniform(), StdFlat())
+        for S in (StdNormal(), StdUniform(), TVFlat())
             dto = transport_to(DeltaDist(5.0), S)
             @test dimension(dto) == 0
             @test transport(dto, Float64[]) == 5.0

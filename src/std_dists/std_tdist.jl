@@ -3,14 +3,15 @@ struct StdTDist{T, Tν, N, Tl} <: AbstractStdDist{T, N}
     lognorm::Tl
     dims::Dims{N}
     function StdTDist(ν::Union{Number, AbstractArray}, dims::Dims{N}) where {N}
-        Tν = eltype(ν)
-        T = float(Tν)
+        Tν = typeof(ν)
+        T = float(eltype(ν))
         lognorm = _lognorm_tdist(ν, prod(dims))
         return new{T, Tν, N, typeof(lognorm)}(ν, lognorm, dims)
     end
 end
-# Store `ν` as-is; derive the output eltype `T` as the parameter type promoted to
-# a float. This keeps an integer `ν` from making `T = Int` (which would break the
+# Store `ν` as-is (`Tν = typeof(ν)` — scalar or array); derive the output eltype `T` as the
+# parameter *eltype* promoted to a float. This keeps an integer `ν` from making `T = Int`
+# (which would break the
 # `T(±Inf)`/`T(NaN)` moments) without copying float/traced parameter arrays.
 # `float(::Type)` resolves for traced eltypes inside a trace — the only place they
 # exist — and the per-element kernels coerce via the value-level `float(ν)`.
@@ -41,10 +42,10 @@ end
 end
 @inline function _unnormed_kernel_sum(d::StdTDist, z)
     ν = d.ν
-    s = zero(z)
+    s = zero(eltype(z))
     @trace for i in eachindex(z)
-        log_term = log1p(abs2(z[i]) / ν[i])
         νi = _getith(ν, i)
+        log_term = log1p(abs2(_rgetindex(z, i)) / νi)
         s += ((νi + one(νi)) / 2) * log_term
     end
     return -s
@@ -71,13 +72,11 @@ end
 function Random.rand(rng::AbstractRNG, d::StdTDist{T, <:Number, 0}) where {T}
     return _rand_tdist(rng, d.ν)
 end
-# NOTE: the array sampler still uses a per-element loop. On CPU it is correct; under
-# Reactant `@compile` the loop does not thread the RNG (see `_rand_gamma` in
-# `misc.jl`), so array `StdTDist` sampling is not yet traceable — scalar sampling is.
+
 function _std_rand!(rng::AbstractRNG, d::StdTDist{T}, x::AbstractArray) where {T}
     ν = d.ν
     @trace for i in eachindex(x)
-        x[i] = _rand_tdist(rng, _getith(ν, i))
+        _rsetindex!(x, _rand_tdist(rng, _getith(ν, i)), i)
     end
     return x
 end
@@ -115,15 +114,7 @@ function Dists.var(d::StdTDist{T, <:AbstractArray, N}) where {T, N}
 end
 
 
-# ----- cdf / quantile -----------------------------------------------------
-# Built on the regularised incomplete beta function. With `a = ν/2`, `b = 1/2`,
-# and `arg = ν / (ν + z²)`:
-#   cdf(z) = 1 - I(arg; a, b) / 2   for z >= 0
-#   cdf(z) =     I(arg; a, b) / 2   for z <  0
-# Quantile inverts the same identity.
-# Element-wise kernels take `ν` directly so they broadcast against either a
-# scalar or a per-element parameter array — used by the ArrayHC ascube path
-# below for the per-element-ν specialisation.
+# ----- cdf / quantile 
 
 @inline function _t_elem_cdf(ν, x)
     a = ν / 2

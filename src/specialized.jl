@@ -43,7 +43,7 @@ end
 # The stick-breaking map (per-coordinate Beta quantiles) is an *exact* measure
 # transport from the per-coordinate reference to the Dirichlet (dimension-reducing,
 # K -> K-1). Because it is exact, its pulled-back density under a Std space is the
-# closed-form reference and no Jacobian is needed (only `StdFlat` Dirichlet, handled by
+# closed-form reference and no Jacobian is needed (only `TVFlat` Dirichlet, handled by
 # TV's `UnitSimplex`, carries a Jacobian). The pullback is the re-derived exact inverse.
 
 dimension(c::ArrayTransport{<:Dists.Dirichlet}) =

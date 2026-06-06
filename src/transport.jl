@@ -21,9 +21,9 @@ likelihood) and add `ℓ`. Dispatched on the latent space:
 
   - Std spaces (`StdNormal`/`StdUniform`): `ℓ == logpdf(reference, y)`, the closed-form
     reference density — **no Jacobian is computed**, because the transport is exact.
-  - `StdFlat`: `ℓ == logpdf(start, x) + logjac`, the genuine change of variables.
+  - `TVFlat`: `ℓ == logpdf(start, x) + logjac`, the genuine change of variables.
 
-Std-space methods live in `transported.jl`; the `StdFlat` method lives in the
+Std-space methods live in `transported.jl`; the `TVFlat` method lives in the
 TransformVariables extension (where the whole flat tree is a single TV transform).
 """
 function transport_and_logdensity end
@@ -34,7 +34,7 @@ function transport_and_logdensity end
 A *section* of `transport`: return a canonical latent point mapping to `x`, i.e.
 `transport(c, pullback(c, x)) == x`. It is the exact inverse only for bijective
 (dimension-preserving) nodes; for dimension-expanding nodes it picks a documented
-representative. Deliberately *not* called `inverse`.
+representative.
 """
 function pullback end
 
@@ -54,7 +54,7 @@ coordinates of `y` starting at `index`, returning the transported `value` and th
 index `index′ = index + dimension(c)`. It carries **no Jacobian**: an exact transport to
 a Std space has pulled-back density equal to the closed-form reference, so the Jacobian
 is never needed there. The flat space does the genuine change of variables entirely in
-TransformVariables (every `StdFlat` node is a TV transform), so no core node forms one.
+TransformVariables (every `TVFlat` node is a TV transform), so no core node forms one.
 
 This is the performance-critical extension point for defining a **new node type**
 (most extensions instead add [`transport_node`](@ref) methods or a `space_*` trait,
@@ -64,7 +64,8 @@ subtype implement, all index-threaded for zero-allocation composition:
   - `dimension(c)` — latent coordinates consumed
   - `transport_step(c, y, index) -> (value, index′)`
   - `pullback_step!(y, index, c, x) -> index′` — write the latent coords for `x`
-  - `pullback_eltype(c, ::Type)` — element type for the pullback buffer
+  - `pullback_eltype(c)` — latent-buffer element type (defaults to the reference space's
+    eltype via `space(c)`; only override for a node with no `space`, e.g. a 0-dim constant)
 """
 function transport_step end
 
@@ -91,7 +92,7 @@ result in a [`TransportedDistribution`](@ref).
 
 Dispatch is on *both* the distribution and the space, so the same distribution can
 map to different nodes per space (e.g. `MvNormal` becomes an affine-Cholesky
-pushforward under `StdNormal` but a TransformVariables transform under `StdFlat`).
+pushforward under `StdNormal` but a TransformVariables transform under `TVFlat`).
 Composites (`Tuple`/`NamedTuple`/`NamedDist`) recurse into a `TupleTransport`, and an
 already-built `AbstractTransport` is passed through unchanged.
 """
@@ -106,13 +107,27 @@ function transport(c::AbstractTransport, y)
     return first(transport_step(c, y, firstindex(y)))
 end
 
-function pullback(c::AbstractTransport, x)
-    y = Vector{pullback_eltype(c, x)}(undef, dimension(c))
+"""
+    pullback!(y, c::AbstractTransport, x)
+
+Write the latent coordinates of `x` into the buffer `y` (an `AbstractVector` of length
+`dimension(c)`) and return it. The caller owns `y`, so its array type sets the backend —
+a `Vector` on CPU, a `TracedRArray`/`GPUArray` under Reactant/GPU. This is the
+allocation-free primitive; [`pullback`](@ref) is the convenience that allocates a `Vector`.
+"""
+function pullback!(y::AbstractVector, c::AbstractTransport, x)
+    @argcheck length(y) == dimension(c)
     pullback_step!(y, firstindex(y), c, x)
     return y
 end
 
-pullback_eltype(c::AbstractTransport, x) = pullback_eltype(c, typeof(x))
+# Convenience: allocate a plain CPU `Vector` (eltype fixed by the reference space) and fill
+# it. For Reactant/GPU, call `pullback!` with a backend-appropriate buffer instead.
+function pullback(c::AbstractTransport, x)
+    return pullback!(Vector{pullback_eltype(c)}(undef, dimension(c)), c, x)
+end
+
+pullback_eltype(c::AbstractTransport) = _ensure_float(eltype(space(c)))
 
 # ----- scalar node: the universal unit-interval factoring ------------------
 #
@@ -134,7 +149,7 @@ function transport_node(d::Dists.UnivariateDistribution, space)
             "Cannot transport `$(nameof(typeof(d)))` to `$(nameof(typeof(space)))`: it has " *
             "no `quantile` method, so there is no exact transport of its variables to " *
             "`$(nameof(typeof(space)))`. Provide `quantile`/`cdf`, add a `transport_node` " *
-            "specialization, or use `StdFlat()`.",
+            "specialization, or use `TVFlat()`.",
         ),
     )
     return ScalarTransport(d, space)
@@ -153,8 +168,6 @@ function pullback_step!(y, index, c::ScalarTransport, x::Real)
     return index + 1
 end
 
-pullback_eltype(::ScalarTransport, ::Type{T}) where {T} = _ensure_float(eltype(T))
-
 # ----- array node ---------------------------------------------------------
 # Phase 1 supports `Product` (independent, per-coordinate). Correlated /
 # dimension-changing array distributions are specialized in later phases.
@@ -172,22 +185,21 @@ transport_node(d::Union{Dists.MultivariateDistribution, Dists.MatrixDistribution
 
 dimension(c::ArrayTransport) = prod(c.dims) * space_dimension(typeof(c.space))
 
-pullback_eltype(::ArrayTransport, ::Type{V}) where {V <: AbstractArray} = _ensure_float(eltype(V))
-
 function transport_step(c::ArrayTransport{<:Dists.Product}, y, index)
     comps = c.dist.v
     T = _ensure_float(eltype(y))
-    out = Vector{T}(undef, length(comps))
-    @inbounds for i in eachindex(comps)
-        xi, index = transport_step(ScalarTransport(comps[i], c.space), y, index)
-        out[i] = xi
+    out = similar(y, T, length(comps))
+    indexr = promote_index(index)
+    @trace track_numbers = false for i in eachindex(comps)
+        xi, indexr = transport_step(ScalarTransport(comps[i], c.space), y, indexr)
+        _rsetindex!(out, xi, i)
     end
     return out, index
 end
 
 function pullback_step!(y, index, c::ArrayTransport{<:Dists.Product}, x)
     comps = c.dist.v
-    @inbounds for i in eachindex(comps)
+    @trace track_numbers = false for i in eachindex(comps)
         index = pullback_step!(y, index, ScalarTransport(comps[i], c.space), x[i])
     end
     return index
@@ -213,5 +225,5 @@ transport_step(::EmptyNamedTupleTransport, y, index) = (;), index
 pullback_step!(y, index, ::EmptyTupleTransport, ::Tuple{}) = index
 pullback_step!(y, index, ::EmptyNamedTupleTransport, ::NamedTuple{()}) = index
 
-pullback_eltype(::EmptyTupleTransport, ::Type) = Bool
-pullback_eltype(::EmptyNamedTupleTransport, ::Type) = Bool
+pullback_eltype(::EmptyTupleTransport) = Bool
+pullback_eltype(::EmptyNamedTupleTransport) = Bool

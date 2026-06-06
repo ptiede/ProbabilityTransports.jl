@@ -1,7 +1,7 @@
 # ----- the "space" trait --------------------------------------------------
 #
 # A *space* is the latent reference we transport into. It is specified by an
-# instance of a `Std*` distribution (or the `StdFlat()` marker, handled in the
+# instance of a `Std*` distribution (or the `TVFlat()` marker, handled in the
 # TransformVariables extension). For the quantile-based spaces, a space only has
 # to supply a per-coordinate map to/from the unit interval plus a per-coordinate
 # reference log-density:
@@ -20,22 +20,10 @@ function space_logpdf end
 
 space_dimension(::Type) = 1
 
-# ----- StdUniform: the unit hypercube (identity latent<->unit map) ---------
+"""
+    TVFlat
 
-space_cdf(::StdUniform, y) = clamp(y, zero(y), one(y))
-space_quantile(::StdUniform, u) = u
-space_logpdf(::StdUniform, y) = zero(y)
-space_dimension(::Type{<:StdUniform}) = 1
-
-# ----- StdNormal: standard normal latent space ----------------------------
-
-space_cdf(d::StdNormal, y) = _std_cdf(d, y)        # Φ  (defined in StdDists/std_normal.jl)
-space_quantile(d::StdNormal, u) = _std_quantile(d, u)  # Φ⁻¹
-space_logpdf(::StdNormal, y) = -y * y / 2 - oftype(y, log(2π) / 2)
-space_dimension(::Type{<:StdNormal}) = 1
-
-# ----- StdFlat: the TransformVariables (unconstrained ℝⁿ) space ------------
-# Marker only; all of its behavior lives in the TransformVariables extension so
-# that the marker can be named without loading TransformVariables.
-
-struct StdFlat end
+Uses the TransformVariables transformation as the transport. Unlike StdNormal, StdUniform, we preserve the
+original distribution but move the support to ℝⁿ, so the transport is a TV transform rather than a pushforward. 
+"""
+struct TVFlat end

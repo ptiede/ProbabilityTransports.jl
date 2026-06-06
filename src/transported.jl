@@ -15,9 +15,10 @@ end
     transport_to(distribution, space)
 
 Build a [`TransportedDistribution`](@ref) that maps the latent `space` (an
-instance of `StdNormal()`, `StdUniform()`, or `StdFlat()`) to `distribution`.
+instance of `StdNormal()`, `StdUniform()`, or `TVFlat()`) to `distribution`.
 """
-function transport_to(dist, space)
+function transport_to(dist, space::AbstractStdDist{T}) where {T}
+    isconcretetype(T) || error("transport_to only supports concrete eltypes; got $T")
     node = transport_node(dist, space)
     n = dimension(node)
     stop = basemeasure(space, n)
@@ -45,13 +46,21 @@ transport(d::TransportedDistribution, y) = transport(d.transport, y)
 
 A latent point mapping to the original-space value `x` (a section; see [`pullback`](@ref)).
 """
-pullback(d::TransportedDistribution, x) = pullback(d.transport, x)
+pullback(d::TransportedDistribution, x) = pullback(getfield(d, :transport), x)
+
+"""
+    pullback!(y, dto::TransportedDistribution, x)
+
+In-place [`pullback`](@ref): write the latent coordinates of `x` into the caller-owned
+buffer `y` (its array type sets the backend — `Vector`/`TracedRArray`/`GPUArray`).
+"""
+pullback!(y, d::TransportedDistribution, x) = pullback!(y, getfield(d, :transport), x)
 
 # `transport_and_logdensity` dispatches on the *space* (the `stop` field).
 #
 # Std spaces: the transport is exact, so the pulled-back density is the closed-form
 # reference `logpdf(stop, y)` — we return the transported point (for the likelihood)
-# without ever forming a Jacobian. The `StdFlat` method (`stop === nothing`), which does
+# without ever forming a Jacobian. The `TVFlat` method (`stop === nothing`), which does
 # the genuine change of variables on a TV transform, lives in the TV extension.
 function transport_and_logdensity(d::TransportedDistribution, y)
     return transport(getfield(d, :transport), y), Dists.logpdf(d, y)
@@ -62,7 +71,7 @@ end
 
 The pulled-back *target* density at latent `y` — the prior contribution a sampler
 targets. Equals `last(transport_and_logdensity(dto, y))`: `logpdf(reference, y)` for the
-Std spaces (exact transport) and `logpdf(start, transport(dto, y)) + logjac` for `StdFlat`.
+Std spaces (exact transport) and `logpdf(start, transport(dto, y)) + logjac` for `TVFlat`.
 """
 logpdf_fwd(d::TransportedDistribution, y) = last(transport_and_logdensity(d, y))
 
