@@ -12,17 +12,34 @@
 #
 # Transporting to a *matching* space (e.g. `StdNormal -> StdNormal`) collapses the
 # inner to the identity, so the whole transport is just `f` — no cdf/quantile.
+#
+# `lognorm` (the constant component of the logpdf) is computed at construction and stored.
+# It splits as the base's own `lognorm(base)` plus the map's inverse-map log-det
+# `map_lognorm(f, base)` — the latter is the extension point: to support a custom `f`
+# whose log-det is data-independent, add a `map_lognorm` method for it.
 
-struct PushforwardDistribution{F, D <: Dists.Distribution, N} <:
+struct PushforwardDistribution{F, D <: Dists.Distribution, N, L} <:
        Dists.ContinuousDistribution{Dists.ArrayLikeVariate{N}}
     f::F
     base::D
+    lognorm::L
 end
 function PushforwardDistribution(
         f, base::Dists.Distribution{Dists.ArrayLikeVariate{N}}
     ) where {N}
-    return PushforwardDistribution{typeof(f), typeof(base), N}(f, base)
+    ℓ = lognorm(base) + map_lognorm(f, base)
+    return PushforwardDistribution{typeof(f), typeof(base), N, typeof(ℓ)}(f, base, ℓ)
 end
+
+# The map's inverse-map log-det `logabsdet(∂f⁻¹/∂x)` — the map's contribution to the
+# constant `lognorm`. Defined ONLY for maps whose log-det is data-independent (the shipped
+# affine maps); there is intentionally no generic fallback, so a map without a
+# `map_lognorm` method hits a `MethodError` *here* (a clear "define this for your `f`"
+# signal) instead of silently storing a wrong "constant" for an `f` whose log-det varies
+# with the data.
+map_lognorm(f::ScaleShift{<:Any, <:Number}, base) = -length(base) * log(abs(f.s))
+map_lognorm(f::ScaleShift{<:Any, <:AbstractArray}, _) = -sum(log ∘ abs, f.s)
+map_lognorm(f::AffineTransform, _) = -_logabsdet(f.L)
 
 Base.size(d::PushforwardDistribution) = size(d.base)
 Base.length(d::PushforwardDistribution) = length(d.base)
@@ -62,14 +79,13 @@ Dists.logpdf(d::PushforwardDistribution{<:Any, <:Any, N}, x::AbstractArray{<:Rea
     _pushforward_logpdf(d, x)
 
 # Cache split (the AbstractStdDist convention `logpdf = unnormed_logpdf + lognorm`):
-# the inverse-map log-det of an affine map is data-INDEPENDENT, so it lives in
-# `lognorm`; only `unnormed_logpdf(base, f⁻¹(x))` depends on the data. (For a
-# general non-affine `f` use `logpdf` directly — there is no constant split.)
+# the inverse-map log-det is data-INDEPENDENT, so it lives in `lognorm` — precomputed at
+# construction as `lognorm(base) + map_lognorm(f, base)` and stored in `d.lognorm`; only
+# `unnormed_logpdf(base, f⁻¹(x))` depends on the data. The split exists exactly when
+# `map_lognorm` is defined for `f` (the shipped affine maps); a `f` whose log-det varies
+# with the data has no `map_lognorm` method, so no such distribution is built in the first place.
 unnormed_logpdf(d::PushforwardDistribution, x) = unnormed_logpdf(d.base, inverse(d.f)(x))
-lognorm(d::PushforwardDistribution) = lognorm(d.base) + _inv_map_logabsdet(d.f, d.base)
-_inv_map_logabsdet(f::ScaleShift{<:Any, <:Number}, base) = -length(base) * log(abs(f.s))
-_inv_map_logabsdet(f::ScaleShift{<:Any, <:AbstractArray}, _) = -sum(log ∘ abs, f.s)
-_inv_map_logabsdet(f::AffineTransform, _) = -_logabsdet(f.L)
+lognorm(d::PushforwardDistribution) = d.lognorm
 
 # affine maps push the mean through exactly: E[f(Z)] = f(E[Z])
 Dists.mean(d::PushforwardDistribution) = d.f(Dists.mean(d.base))
