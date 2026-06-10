@@ -162,7 +162,7 @@ function transport_step(c::ScalarTransport, y, index)
     return x, index + 1
 end
 
-function pullback_step!(y, index, c::ScalarTransport, x::Real)
+function pullback_step!(y, index, c::ScalarTransport, x::Number)
     u = cdf(c.dist, x)
     _rsetindex!(y, space_quantile(c.space, u), index)
     return index + 1
@@ -180,8 +180,22 @@ end
 
 ArrayTransport(d, space) = ArrayTransport(d, size(d), space)
 
-transport_node(d::Union{Dists.MultivariateDistribution, Dists.MatrixDistribution}, space) =
-    ArrayTransport(d, size(d), space)
+# Mirror the univariate build-time check: only distributions with a `transport_step`
+# specialization for their `ArrayTransport` (Product, the Std* bases, Dirichlet, …)
+# have an exact array transport. Anything else must error here, at build, instead of
+# with a deep `MethodError` on the first `transport` call.
+function transport_node(d::Union{Dists.MultivariateDistribution, Dists.MatrixDistribution}, space)
+    c = ArrayTransport(d, size(d), space)
+    static_hasmethod(transport_step, Tuple{typeof(c), Vector{Float64}, Int}) || throw(
+        ArgumentError(
+            "Cannot transport `$(nameof(typeof(d)))` to `$(nameof(typeof(space)))`: there " *
+            "is no exact array transport for it. Add a `transport_node` (or " *
+            "`transport_step`) specialization, reparameterize via " *
+            "`PushforwardDistribution`, or use `TVFlat()`.",
+        ),
+    )
+    return c
+end
 
 dimension(c::ArrayTransport) = prod(c.dims) * space_dimension(typeof(c.space))
 
@@ -194,15 +208,18 @@ function transport_step(c::ArrayTransport{<:Dists.Product}, y, index)
         xi, indexr = transport_step(ScalarTransport(comps[i], c.space), y, indexr)
         _rsetindex!(out, xi, i)
     end
-    return out, index
+    # `indexr` may be traced inside the loop; the advance is static, so return it
+    # statically — composites after this node must see the consumed coordinates.
+    return out, index + dimension(c)
 end
 
 function pullback_step!(y, index, c::ArrayTransport{<:Dists.Product}, x)
     comps = c.dist.v
+    indexr = promote_index(index)
     @trace track_numbers = false for i in eachindex(comps)
-        index = pullback_step!(y, index, ScalarTransport(comps[i], c.space), x[i])
+        indexr = pullback_step!(y, indexr, ScalarTransport(comps[i], c.space), x[i])
     end
-    return index
+    return index + dimension(c)
 end
 
 # ----- empty composites ---------------------------------------------------

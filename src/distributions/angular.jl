@@ -65,7 +65,7 @@ end
 # it lowers to `stablehlo.while`; otherwise `@trace` expands to the plain loop, so
 # CPU sampling is unchanged. `@trace` forbids `break`/`continue`/`return` in its
 # body, hence the boolean-flag form.
-function _rand_vonmises(rng::AbstractRNG, μ::Real, κ::Real)
+function _rand_vonmises(rng::AbstractRNG, μ::Number, κ::Number)
     T = float(promote_type(typeof(μ), typeof(κ)))
     m = T(μ)
     k = T(κ)

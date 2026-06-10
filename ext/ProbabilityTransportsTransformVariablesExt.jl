@@ -83,7 +83,21 @@ PT.transport_node(d::Dists.AffineDistribution, ::PT.TVFlat) = _interval(d)
 PT.transport_node(d::Dists.Dirichlet, ::PT.TVFlat) = TV.UnitSimplex(length(d.alpha))
 PT.transport_node(d::Dists.MvNormal, ::PT.TVFlat) = as(Vector, length(d))
 PT.transport_node(d::Dists.MvLogNormal, ::PT.TVFlat) = as(Vector, as(Real, 0, TV.∞), length(d))
-PT.transport_node(d::Dists.Product, ::PT.TVFlat) = as(Vector, _interval(first(d.v)), length(d.v))
+# `as(Vector, t, n)` applies ONE transform to every coordinate, so it is only correct
+# when every component shares a support. Check at build time; a heterogeneous Product
+# would otherwise silently push components through the wrong constraint.
+function PT.transport_node(d::Dists.Product, ::PT.TVFlat)
+    s1 = Dists.support(first(d.v))
+    all(c -> Dists.support(c) == s1, d.v) || throw(
+        ArgumentError(
+            "Cannot transport this `Product` to `TVFlat()`: its components have " *
+            "different supports, but the flat transform applies one constraint to " *
+            "every coordinate. Use a `Tuple`/`TupleDist` of the component " *
+            "distributions instead, which transforms each component separately.",
+        ),
+    )
+    return as(Vector, _interval(first(d.v)), length(d.v))
+end
 
 # array-shaped Std* bases: 0-dim → scalar interval; N ≥ 1 → unconstrained array.
 _TVFlat(d, inner) = isempty(size(d)) ? inner : as(Array, inner, size(d)...)

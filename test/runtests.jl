@@ -1,4 +1,6 @@
 using ProbabilityTransports
+# not exported (clashes with TransformVariables.dimension); import explicitly
+using ProbabilityTransports: dimension
 using Distributions
 using Random
 using LinearAlgebra
@@ -36,6 +38,18 @@ end
 
 # independent reconstruction of logpdf_fwd; compare to the package's value.
 fd_fwd(dto, start, y) = logpdf(start, transport(dto, y)) + fd_logjac(dto, y)
+
+# ---- a data-dependent pushforward map (x = exp.(z)) for the general-map tests ----
+# Exercises the non-affine PushforwardDistribution path: `const_logdet(ExpMap()) ==
+# false`, so the inverse log-det is computed per call via `with_logabsdet_jacobian`.
+struct ExpMap end
+struct LogMap end
+(::ExpMap)(z) = exp.(z)
+(::LogMap)(x) = log.(x)
+PT.InverseFunctions.inverse(::ExpMap) = LogMap()
+PT.InverseFunctions.inverse(::LogMap) = ExpMap()
+PT.ChangesOfVariables.with_logabsdet_jacobian(::ExpMap, z) = (exp.(z), sum(z))
+PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log, x))
 
 @testset "ProbabilityTransports.jl" begin
 
@@ -96,6 +110,43 @@ fd_fwd(dto, start, y) = logpdf(start, transport(dto, y)) + fd_logjac(dto, y)
             x = transport(dto, y)
             @test pullback(dto, x) ≈ y
         end
+    end
+
+    @testset "regression: Product nested in a composite advances the index" begin
+        rng = MersenneTwister(18)
+        # Mixed families yield a genuine `Product` (Normals-only would collapse to
+        # MvNormal and dodge this path). The component AFTER the Product must consume
+        # fresh latent coordinates, not re-read the Product's.
+        P = product_distribution([Gamma(2.0, 1.0), Exponential(0.5)])
+        @test P isa Distributions.Product
+        nd = (a = P, b = Normal(10.0, 0.1))
+        for S in (StdNormal(), StdUniform())
+            dto = transport_to(nd, S)
+            @test dimension(dto) == 3
+            y = rand(rng, dto)
+            x = transport(dto, y)
+            bref = transport(transport_to(Normal(10.0, 0.1), S), y[3:3])
+            @test x.b ≈ bref
+            @test pullback(dto, x) ≈ y
+        end
+        # plain-Tuple composite, Product first
+        dto = transport_to(
+            (product_distribution([Gamma(2.0, 1.0), Gamma(3.0, 1.0)]), Uniform(2.0, 3.0)),
+            StdUniform(),
+        )
+        u = rand(MersenneTwister(19), dimension(dto))
+        xt = transport(dto, u)
+        @test xt[2] ≈ 2.0 + u[3]
+        @test pullback(dto, xt) ≈ u
+    end
+
+    @testset "build-time errors for unsupported transports" begin
+        # multivariate with no exact array transport: error at build, not first use
+        D = MvLogNormal(MvNormal(zeros(2), Matrix(1.0 * I, 2, 2)))
+        @test_throws ArgumentError transport_to(D, StdNormal())
+        # Std* bases are transportable distributions, not target spaces
+        @test_throws ArgumentError transport_to(Normal(), StdExponential())
+        @test_throws ArgumentError transport_to(Normal(), StdTDist(3.0))
     end
 
     @testset "nested NamedDist / TupleDist (mixed shapes, both spaces)" begin
@@ -286,6 +337,108 @@ fd_fwd(dto, start, y) = logpdf(start, transport(dto, y)) + fd_logjac(dto, y)
         @test x isa NamedTuple{(:a, :b, :c)}
         @test logpdf(dto, y) ≈ logpdf_fwd(dto, y)
         @test pullback(dto, x) ≈ y
+    end
+
+    @testset "heterogeneous Product under TVFlat errors; homogeneous works" begin
+        # `as(Vector, t, n)` applies one constraint to every coordinate, so mixed
+        # supports must error at build instead of silently mis-transforming.
+        Phet = product_distribution([Gamma(2.0, 1.0), Normal(0.0, 1.0)])
+        @test_throws ArgumentError transport_to(Phet, TVFlat())
+        # same support, different parameters: fine
+        Phom = product_distribution([Gamma(2.0, 1.0), Exponential(0.5)])
+        dto = transport_to(Phom, TVFlat())
+        y = randn(MersenneTwister(20), dimension(dto))
+        x = transport(dto, y)
+        @test all(>(0), x)
+        @test isapprox(fd_fwd(dto, Phom, y), logpdf_fwd(dto, y); atol = 1e-5)
+        @test pullback(dto, x) ≈ y
+    end
+
+    @testset "PushforwardDistribution density / sampling" begin
+        rng = MersenneTwister(21)
+        # scalar ScaleShift over StdNormal ≡ Normal(μ, σ)
+        d = PushforwardDistribution(PT.ScaleShift(1.0, 2.0), StdNormal())
+        ref = Normal(1.0, 2.0)
+        for x in (-0.7, 0.3, 2.9)
+            @test logpdf(d, x) ≈ logpdf(ref, x)
+            @test cdf(d, x) ≈ cdf(ref, x)
+        end
+        @test quantile(d, 0.3) ≈ quantile(ref, 0.3)
+        @test mean(d) ≈ 1.0
+        @test var(d) ≈ 4.0
+        # array ScaleShift over an array base ≡ iid Normal(μᵢ, sᵢ); the cached
+        # lognorm split must reproduce the full density (regression: the split once
+        # double-counted lognorm(base)).
+        μ = [0.5, -1.0, 2.0]
+        s = [1.0, 2.0, 0.5]
+        da = PushforwardDistribution(PT.ScaleShift(μ, s), StdNormal(3))
+        xa = [0.2, 0.4, 1.9]
+        @test logpdf(da, xa) ≈ sum(logpdf(Normal(μ[i], s[i]), xa[i]) for i in 1:3)
+        @test logpdf(da, xa) ≈ PT.unnormed_logpdf(da, xa) + PT.lognorm(da)
+        # AffineTransform over StdNormal(2) ≡ MvNormal(μ, L·Lᵀ)
+        L = LowerTriangular([1.0 0.0; 0.4 0.8])
+        μ2 = [1.0, -1.0]
+        dm = PushforwardDistribution(PT.AffineTransform(μ2, L), StdNormal(2))
+        refm = MvNormal(μ2, Matrix(L * L'))
+        x2 = [0.3, -0.2]
+        @test logpdf(dm, x2) ≈ logpdf(refm, x2)
+        @test cov(dm) ≈ L * L'
+        @test mean(dm) ≈ μ2
+        # sampling sanity + exact transport over the matching space
+        xs = rand(rng, da, 20_000)
+        @test vec(sum(xs; dims = 2)) ./ 20_000 ≈ μ atol = 0.05
+        dto = transport_to(da, StdNormal())
+        y = rand(rng, dto)
+        @test isapprox(fd_fwd(dto, da, y), logpdf_fwd(dto, y); atol = 1e-5)
+        @test pullback(dto, transport(dto, y)) ≈ y
+    end
+
+    @testset "data-dependent pushforward map: exp ∘ StdNormal ≡ LogNormal" begin
+        rng = MersenneTwister(23)
+        dln = PushforwardDistribution(ExpMap(), StdNormal(3))
+        x = [0.5, 1.2, 2.0]
+        @test logpdf(dln, x) ≈ sum(logpdf.(LogNormal(), x))
+        @test @inferred(logpdf(dln, x)) isa Float64
+        # the split convention still holds: the per-call Jacobian lives in unnormed
+        @test logpdf(dln, x) ≈ PT.unnormed_logpdf(dln, x) + PT.lognorm(dln)
+        @test all(>(0), rand(rng, dln))
+        # scalar (0-dim) base
+        ds = PushforwardDistribution(ExpMap(), StdNormal())
+        @test logpdf(ds, 1.3) ≈ logpdf(LogNormal(), 1.3)
+        # exact transport: f over the matching-base identity (no cdf/quantile)
+        dto = transport_to(dln, StdNormal())
+        y = randn(rng, 3)
+        @test transport(dto, y) ≈ exp.(y)
+        @test isapprox(fd_fwd(dto, dln, y), logpdf_fwd(dto, y); atol = 1e-5)
+        @test pullback(dto, transport(dto, y)) ≈ y
+        # flat path: TV threads the data-dependent Jacobian per call
+        dtf = transport_to(dln, TVFlat())
+        yf = randn(rng, 3)
+        @test isapprox(fd_fwd(dtf, dln, yf), logpdf_fwd(dtf, yf); atol = 1e-5)
+        @test pullback(dtf, transport(dtf, yf)) ≈ yf
+    end
+
+    @testset "type stability and eltype" begin
+        rng = MersenneTwister(22)
+        td = TupleDist((Normal(), Gamma(2.0)))
+        xt = @inferred rand(rng, td)
+        @test xt isa Tuple{Float64, Float64}
+
+        nd = NamedDist(a = Normal(), b = (Uniform(), Exponential()), c = Gamma(2.0))
+        for S in (StdNormal(), StdUniform())
+            dto = transport_to(nd, S)
+            y = rand(rng, dto)
+            x = @inferred transport(dto, y)
+            @inferred pullback(dto, x)
+            @inferred logpdf_fwd(dto, y)
+            @inferred transport_and_logdensity(dto, y)
+        end
+
+        # eltype follows the latent reference
+        dto32 = transport_to(Normal(1.0f0, 2.0f0), StdNormal{Float32}())
+        @test eltype(dto32) == Float32
+        @test eltype(rand(rng, dto32)) == Float32
+        @test eltype(transport_to(Normal(), StdNormal())) == Float64
     end
 
     @testset "affine by reuse: LocationScale over Std bases" begin

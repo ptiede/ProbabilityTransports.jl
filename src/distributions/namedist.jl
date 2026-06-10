@@ -23,7 +23,11 @@ end
 Dists.logpdf(::TupleDist{0}, ::Tuple{}) = 0.0
 
 function Dists.rand(rng::AbstractRNG, d::TupleDist{N}) where {N}
-    return ntuple(i -> rand(rng, d.dists[i]), N)
+    rdn = Base.Fix1(rand, rng)
+    return ntuple(Val(N)) do i
+        Base.@_inline_meta
+        rdn(d.dists[i])
+    end
 end
 
 """

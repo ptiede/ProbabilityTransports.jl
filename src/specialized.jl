@@ -57,10 +57,11 @@ function transport_step(c::ArrayTransport{<:Dists.Dirichlet}, y, index)
     T = _ensure_float(eltype(y))
     x = zeros(T, K)
     remaining = one(T)
+    β = sum(α)   # running suffix sum: after subtracting α[i] it equals Σ α[(i+1):K]
     @inbounds for i in 1:m
         yi = y[index + i - 1]
         u = space_cdf(c.space, yi)
-        β = sum(@view α[(i + 1):K])
+        β -= α[i]
         φ = quantile(Dists.Beta(T(α[i]), T(β)), u)
         x[i] = remaining * φ
         remaining -= x[i]
@@ -75,8 +76,9 @@ function pullback_step!(y, index, c::ArrayTransport{<:Dists.Dirichlet}, x)
     K = length(α)
     m = K - 1
     remaining = one(eltype(x))
+    β = sum(α)   # running suffix sum, as in `transport_step`
     @inbounds for i in 1:m
-        β = sum(@view α[(i + 1):K])
+        β -= α[i]
         φ = x[i] / remaining
         u = cdf(Dists.Beta(α[i], β), φ)
         y[index + i - 1] = space_quantile(c.space, u)

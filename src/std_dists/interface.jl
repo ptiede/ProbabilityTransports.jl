@@ -26,6 +26,7 @@ abstract type AbstractStdDist{T, N} <: Dists.ContinuousDistribution{Dists.ArrayL
 dims(d::AbstractStdDist) = getfield(d, :dims)
 Base.size(d::AbstractStdDist) = dims(d)
 Base.length(d::AbstractStdDist) = prod(size(d))
+Base.eltype(::Type{<:AbstractStdDist{T}}) where {T} = T
 Base.eltype(::AbstractStdDist{T}) where {T} = T
 
 function Dists.logpdf(d::AbstractStdDist{T, 0}, x::Number) where {T}

@@ -13,10 +13,15 @@
 # Transporting to a *matching* space (e.g. `StdNormal -> StdNormal`) collapses the
 # inner to the identity, so the whole transport is just `f` — no cdf/quantile.
 #
-# `lognorm` (the constant component of the logpdf) is computed at construction and stored.
-# It splits as the base's own `lognorm(base)` plus the map's inverse-map log-det
-# `map_lognorm(f, base)` — the latter is the extension point: to support a custom `f`
-# whose log-det is data-independent, add a `map_lognorm` method for it.
+# A general `f` (e.g. exp) is supported: `logpdf` splits its inverse log-det into a
+# data-independent CONSTANT, cached in `lognorm` at construction via `map_lognorm`,
+# plus a data-dependent part evaluated per call via `with_logabsdet_jacobian`. For the
+# affine family the constant IS the whole log-det (`const_logdet(f) == true`), so the
+# per-call Jacobian is skipped entirely; for a general map the constant is zero and the
+# genuine change of variables runs each call. To opt a custom constant-log-det map into
+# the fast path, define `map_lognorm` AND `const_logdet` for it (they must agree:
+# `const_logdet(f) == true` asserts `with_logabsdet_jacobian(inverse(f), x)`'s log-det
+# always equals `map_lognorm(f, base)`).
 
 struct PushforwardDistribution{F, D <: Dists.Distribution, N, L} <:
        Dists.ContinuousDistribution{Dists.ArrayLikeVariate{N}}
@@ -31,15 +36,19 @@ function PushforwardDistribution(
     return PushforwardDistribution{typeof(f), typeof(base), N, typeof(ℓ)}(f, base, ℓ)
 end
 
-# The map's inverse-map log-det `logabsdet(∂f⁻¹/∂x)` — the map's contribution to the
-# constant `lognorm`. Defined ONLY for maps whose log-det is data-independent (the shipped
-# affine maps); there is intentionally no generic fallback, so a map without a
-# `map_lognorm` method hits a `MethodError` *here* (a clear "define this for your `f`"
-# signal) instead of silently storing a wrong "constant" for an `f` whose log-det varies
-# with the data.
+# The data-independent part of the map's inverse log-det `logabsdet(∂f⁻¹/∂x)` — the
+# map's contribution to the cached `lognorm`. A general map contributes no constant
+# (zero); its full log-det is computed per call in `unnormed_logpdf`.
+map_lognorm(f, base) = zero(float(eltype(base)))
 map_lognorm(f::ScaleShift{<:Any, <:Number}, base) = -length(base) * log(abs(f.s))
 map_lognorm(f::ScaleShift{<:Any, <:AbstractArray}, _) = -sum(log ∘ abs, f.s)
 map_lognorm(f::AffineTransform, _) = -_logabsdet(f.L)
+
+# trait: is the inverse log-det a data-independent constant (fully captured by
+# `map_lognorm`)? Compile-time constant per map type, so the `logpdf` branch folds.
+const_logdet(::Any) = false
+const_logdet(::ScaleShift) = true
+const_logdet(::AffineTransform) = true
 
 Base.size(d::PushforwardDistribution) = size(d.base)
 Base.length(d::PushforwardDistribution) = length(d.base)
@@ -64,10 +73,13 @@ end
 
 # Change of variables: `x = f(z)`, `z ~ base`  ⇒
 #   logpdf(x) = logpdf(base, f⁻¹(x)) + logabsdet(∂f⁻¹/∂x)
-# and `with_logabsdet_jacobian(inverse(f), x)` returns exactly `(f⁻¹(x), that log-det)`.
+# split as `unnormed_logpdf(d, x) + lognorm(d)` (the AbstractStdDist convention):
+# `lognorm` holds every data-independent constant (the base's plus the map's via
+# `map_lognorm`), `unnormed_logpdf` holds everything data-dependent. For a
+# constant-log-det map (`const_logdet(f)`) the per-call Jacobian is skipped — the
+# branch below folds at compile time since the trait is a constant per map type.
 @inline function _pushforward_logpdf(d::PushforwardDistribution, x)
-    z, ℓ = with_logabsdet_jacobian(inverse(d.f), x)
-    return Dists.logpdf(d.base, z) + ℓ
+    return unnormed_logpdf(d, x) + lognorm(d)
 end
 Dists.logpdf(d::PushforwardDistribution{<:Any, <:Any, 0}, x::Number) = _pushforward_logpdf(d, x)
 # `<:Number` accepts traced arrays (`TracedRNumber <: Number`); the `<:Real` method
@@ -78,32 +90,43 @@ Dists.logpdf(d::PushforwardDistribution{<:Any, <:Any, N}, x::AbstractArray{<:Num
 Dists.logpdf(d::PushforwardDistribution{<:Any, <:Any, N}, x::AbstractArray{<:Real, N}) where {N} =
     _pushforward_logpdf(d, x)
 
-# Cache split (the AbstractStdDist convention `logpdf = unnormed_logpdf + lognorm`):
-# the inverse-map log-det is data-INDEPENDENT, so it lives in `lognorm` — precomputed at
-# construction as `lognorm(base) + map_lognorm(f, base)` and stored in `d.lognorm`; only
-# `unnormed_logpdf(base, f⁻¹(x))` depends on the data. The split exists exactly when
-# `map_lognorm` is defined for `f` (the shipped affine maps); a `f` whose log-det varies
-# with the data has no `map_lognorm` method, so no such distribution is built in the first place.
-unnormed_logpdf(d::PushforwardDistribution, x) = unnormed_logpdf(d.base, inverse(d.f)(x))
+# The data-dependent part of the density. Constant-log-det maps need only the base's
+# unnormed density at `f⁻¹(x)` (their whole log-det sits in the cached `lognorm`);
+# general maps add their per-call inverse log-det here.
+@inline function unnormed_logpdf(d::PushforwardDistribution, x)
+    if const_logdet(d.f)
+        return unnormed_logpdf(d.base, inverse(d.f)(x))
+    else
+        z, ℓ = with_logabsdet_jacobian(inverse(d.f), x)
+        return unnormed_logpdf(d.base, z) + ℓ
+    end
+end
 lognorm(d::PushforwardDistribution) = d.lognorm
 
-# affine maps push the mean through exactly: E[f(Z)] = f(E[Z])
-Dists.mean(d::PushforwardDistribution) = d.f(Dists.mean(d.base))
+# affine maps push the mean through exactly: E[f(Z)] = f(E[Z]). A general nonlinear
+# map does not, so no generic method.
+Dists.mean(d::PushforwardDistribution{<:Union{ScaleShift, AffineTransform}}) =
+    d.f(Dists.mean(d.base))
 
 Dists.rand(rng::AbstractRNG, d::PushforwardDistribution) = d.f(rand(rng, d.base))
 
 # Two thin entries delegating to `_pf_rand!`. The `<:Real` method breaks the ambiguity
 # with `Distributions._rand!(::Sampleable{<:ArrayLikeVariate}, ::AbstractArray{<:Real})`
 # (strictly more specific in the distribution argument); the `<:Number` method admits
-# traced (Reactant) arrays, whose eltype is not `<:Real`.
+# traced (Reactant) arrays, whose eltype is not `<:Real`. Both are restricted to the
+# variate dimension `N` (one draw): an unrestricted signature would also capture the
+# stacked array Distributions passes for `rand(rng, d, n)`, filling all `n` variates
+# with a single broadcast draw.
 function _pf_rand!(rng::AbstractRNG, d::PushforwardDistribution, x::AbstractArray)
     x .= d.f(rand(rng, d.base))
     return x
 end
-Dists._rand!(rng::AbstractRNG, d::PushforwardDistribution, x::AbstractArray{<:Number}) =
-    _pf_rand!(rng, d, x)
-Dists._rand!(rng::AbstractRNG, d::PushforwardDistribution, x::AbstractArray{<:Real}) =
-    _pf_rand!(rng, d, x)
+Dists._rand!(
+    rng::AbstractRNG, d::PushforwardDistribution{<:Any, <:Any, N}, x::AbstractArray{<:Number, N}
+) where {N} = _pf_rand!(rng, d, x)
+Dists._rand!(
+    rng::AbstractRNG, d::PushforwardDistribution{<:Any, <:Any, N}, x::AbstractArray{<:Real, N}
+) where {N} = _pf_rand!(rng, d, x)
 
 # moments: element-wise scale ⇒ `var = scale² var(base)`; matrix scale ⇒
 # `cov = A cov(base) Aᵀ` (a genuine covariance), `var = diag(cov)`.

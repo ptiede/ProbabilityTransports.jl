@@ -99,4 +99,4 @@ dimension(::ScalarIdentity) = 1
 function transport_step(c::ScalarIdentity, y, index)
     return _rgetindex(y, index), index + 1
 end
-pullback_step!(y, index, ::ScalarIdentity, z::Real) = (_rsetindex!(y, z, index); index + 1)
+pullback_step!(y, index, ::ScalarIdentity, z::Number) = (_rsetindex!(y, z, index); index + 1)

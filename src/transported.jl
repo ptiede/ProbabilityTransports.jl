@@ -28,10 +28,26 @@ end
 # latent reference of the correct (flattened) dimension
 basemeasure(::StdNormal{T}, n::Int) where {T} = StdNormal{T}(n)
 basemeasure(::StdUniform{T}, n::Int) where {T} = StdUniform{T}(n)
+# The other Std* distributions are transportable *bases*, not target spaces: they
+# lack the `space_*` trait, so error clearly at build time instead of deep in a
+# transport. A new target space must define `space_*` AND a `basemeasure` method.
+function basemeasure(space::AbstractStdDist, n::Int)
+    throw(
+        ArgumentError(
+            "`$(nameof(typeof(space)))` is a transportable base distribution, not a " *
+            "target space: `transport_to` supports `StdNormal()`, `StdUniform()`, and " *
+            "`TVFlat()` targets. To add a new target space define the `space_cdf`/" *
+            "`space_quantile`/`space_logpdf` trait and a `basemeasure` method for it.",
+        ),
+    )
+end
 
 transport(d::TransportedDistribution) = getfield(d, :transport)
 Base.length(d::TransportedDistribution) = dimension(getfield(d, :transport))
-Base.eltype(::Type{<:TransportedDistribution}) = Float64
+# eltype is the latent reference's (`stop`): it is the type of the points this
+# distribution samples/scores. Flat (`stop === nothing`) has no reference; keep Float64.
+Base.eltype(::Type{<:TransportedDistribution{T, S, E}}) where {T, S, E <: AbstractStdDist} = eltype(E)
+Base.eltype(::Type{<:TransportedDistribution{T, S, Nothing}}) where {T, S} = Float64
 dimension(d::TransportedDistribution) = dimension(getfield(d, :transport))
 
 """

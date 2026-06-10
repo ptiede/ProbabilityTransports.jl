@@ -90,6 +90,52 @@ _val(x) = Float64(Reactant.to_number(x))
         @test _val((@compile draw_i(dummy))(dummy)) > 0          # InverseGamma support
     end
 
+    @testset "transport path traces under @compile" begin
+        # The calls a sampler makes in its hot loop: transport, logpdf_fwd,
+        # transport_and_logdensity, and pullback! — over the Reactant-fast nodes
+        # (matching-base identity + affine; no cross-space quantiles).
+
+        # affine image prior: ScaleShift over the matching array StdNormal base
+        μ = Float32.(reshape(1:4, 2, 2)) ./ 4
+        σ = fill(0.5f0, 2, 2)
+        d = PushforwardDistribution(PT.ScaleShift(μ, σ), StdNormal{Float32}(2, 2))
+        dto = transport_to(d, StdNormal{Float32}())
+        y0 = randn(MersenneTwister(42), Float32, 4)
+        cx = transport(dto, y0)
+        cl = logpdf_fwd(dto, y0)
+        yr = Reactant.to_rarray(y0)
+        fx = @compile (y -> transport(dto, y))(yr)
+        @test Array(fx(yr)) ≈ cx rtol = 1.0f-5
+        fl = @compile (y -> logpdf_fwd(dto, y))(yr)
+        @test _val(fl(yr)) ≈ cl rtol = 1.0f-5
+        ft = @compile (y -> last(transport_and_logdensity(dto, y)))(yr)
+        @test _val(ft(yr)) ≈ cl rtol = 1.0f-5
+
+        # pullback! into a caller-owned traced buffer (the buffer sets the backend)
+        xr = Reactant.to_rarray(collect(cx))
+        yb = Reactant.to_rarray(zeros(Float32, 4))
+        fb = @compile ((b, x) -> pullback!(b, dto, x))(yb, xr)
+        @test Array(fb(yb, xr)) ≈ y0 rtol = 1.0f-5
+
+        # MvNormal: affine-Cholesky pushforward
+        Σ = [2.0 0.5; 0.5 1.0]
+        μ2 = [1.0, -1.0]
+        dmv = transport_to(Distributions.MvNormal(μ2, Σ), StdNormal())
+        z0 = randn(MersenneTwister(43), 2)
+        zr = Reactant.to_rarray(z0)
+        fmv = @compile (y -> transport(dmv, y))(zr)
+        @test Array(fmv(zr)) ≈ transport(dmv, z0) rtol = 1.0e-6
+
+        # NamedTuple composite of traceable leaves under the matching space
+        nc = transport_to((a = Distributions.Normal(1.0, 2.0), b = Distributions.MvNormal(μ2, Σ)), StdNormal())
+        w0 = randn(MersenneTwister(44), 3)
+        wr = Reactant.to_rarray(w0)
+        fc = @compile (y -> transport(nc, y).b)(wr)
+        @test Array(fc(wr)) ≈ transport(nc, w0).b rtol = 1.0e-6
+        flc = @compile (y -> logpdf_fwd(nc, y))(wr)
+        @test _val(flc(wr)) ≈ logpdf_fwd(nc, w0) rtol = 1.0e-6
+    end
+
     @testset "_rand_gamma is statistically correct under @compile" begin
         # Strong guard: with the seed as a runtime input the sampler must reproduce
         # the Gamma(α, 1) mean (= α), not merely return a finite value — catches a

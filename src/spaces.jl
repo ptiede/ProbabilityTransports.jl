@@ -13,6 +13,11 @@
 #
 # `space_dimension` is keyed on the *type* so node dimensions stay compile-time
 # constants (critical for type-stable index threading).
+#
+# NOTE: every scalar step (`ScalarTransport`, `ScalarIdentity`, …) currently
+# consumes exactly ONE latent coordinate (`index + 1`), so a space with
+# `space_dimension != 1` is not yet supported — the trait exists so `dimension`
+# bookkeeping has a single source of truth if that ever changes.
 
 function space_cdf end
 function space_quantile end
