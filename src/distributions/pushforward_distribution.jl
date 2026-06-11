@@ -108,6 +108,16 @@ lognorm(d::PushforwardDistribution) = d.lognorm
 Dists.mean(d::PushforwardDistribution{<:Union{ScaleShift, AffineTransform}}) =
     d.f(Dists.mean(d.base))
 
+# Support endpoints of a scalar element-wise affine pushforward. The map is monotone
+# (increasing for s > 0, decreasing for s < 0), so the endpoints are the mapped base
+# endpoints in either order. Needed so `Truncated`/flat transforms see the true support.
+function Base.minimum(d::PushforwardDistribution{<:ScaleShift{<:Number, <:Number}, <:Any, 0})
+    return min(d.f(Dists.minimum(d.base)), d.f(Dists.maximum(d.base)))
+end
+function Base.maximum(d::PushforwardDistribution{<:ScaleShift{<:Number, <:Number}, <:Any, 0})
+    return max(d.f(Dists.minimum(d.base)), d.f(Dists.maximum(d.base)))
+end
+
 Dists.rand(rng::AbstractRNG, d::PushforwardDistribution) = d.f(rand(rng, d.base))
 
 # Two thin entries delegating to `_pf_rand!`. The `<:Real` method breaks the ambiguity

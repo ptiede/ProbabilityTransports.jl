@@ -107,11 +107,12 @@ PT.transport_node(d::PT.StdInverseGamma, ::PT.TVFlat) = _TVFlat(d, as(Real, 0, T
 PT.transport_node(d::PT.StdTDist, ::PT.TVFlat) = _TVFlat(d, as(Real, -TV.∞, TV.∞))
 PT.transport_node(d::PT.StdUniform, ::PT.TVFlat) = _TVFlat(d, as(Real, 0, 1))
 
-# Truncated: flat transform is the constrained interval implied by the bounds.
-PT.transport_node(d::PT.Truncated{<:Any, <:Real, <:Real}, ::PT.TVFlat) = as(Real, d.lower, d.upper)
-PT.transport_node(d::PT.Truncated{<:Any, <:Real, Nothing}, ::PT.TVFlat) = as(Real, d.lower, TV.∞)
-PT.transport_node(d::PT.Truncated{<:Any, Nothing, <:Real}, ::PT.TVFlat) = as(Real, -TV.∞, d.upper)
-PT.transport_node(d::PT.Truncated{<:Any, Nothing, Nothing}, ::PT.TVFlat) = as(Real, -TV.∞, TV.∞)
+# Truncated: flat transform is the SUPPORT interval — the truncation bounds intersected
+# with the base support (which `minimum`/`maximum` compute) — never the explicit bounds
+# alone. A one-sided truncation of a bounded base (e.g. `Truncated(Exponential(); upper=1)`)
+# would otherwise map ℝ → (-∞, 1), exposing a reachable logpdf = -Inf region in flat space
+# that an optimizer/sampler can walk into.
+PT.transport_node(d::PT.Truncated, ::PT.TVFlat) = _interval(d)
 
 # ----- composites: a native TV transform tuple ------------------------------
 # Tuples / NamedTuples / NamedDist / TupleDist become a `TV.as(...)` so the whole flat

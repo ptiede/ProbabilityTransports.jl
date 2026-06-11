@@ -50,9 +50,15 @@ end
 Truncated(d::Dists.UnivariateDistribution; lower = nothing, upper = nothing) =
     Truncated(d, lower, upper)
 
-Base.minimum(d::Truncated{<:Any, <:Number}) = d.lower
+# Support endpoints intersect the truncation bounds with the base support (matching
+# `Distributions.truncated`): a one-sided (or out-of-support) bound must not widen the
+# base support — `Truncated(Exponential(); upper = 1)` has support (0, 1], not (-∞, 1].
+# The flat transform is built from these, so getting them wrong exposes a reachable
+# logpdf = -Inf region in latent space (in practice: negative background flux and a
+# frozen NUTS chain).
+Base.minimum(d::Truncated{<:Any, <:Number}) = max(d.lower, Dists.minimum(d.untruncated))
 Base.minimum(d::Truncated{<:Any, Nothing}) = Dists.minimum(d.untruncated)
-Base.maximum(d::Truncated{<:Any, <:Any, <:Number}) = d.upper
+Base.maximum(d::Truncated{<:Any, <:Any, <:Number}) = min(d.upper, Dists.maximum(d.untruncated))
 Base.maximum(d::Truncated{<:Any, <:Any, Nothing}) = Dists.maximum(d.untruncated)
 Dists.params(d::Truncated) = (Dists.params(d.untruncated)..., d.lower, d.upper)
 

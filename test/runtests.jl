@@ -588,6 +588,37 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
             @test isapprox(fd_fwd(dto, d, y), logpdf_fwd(dto, y); atol = 1e-5)
             @test pullback(dto, x) ≈ y
         end
+
+        # regression: support endpoints intersect the truncation bounds with the BASE
+        # support. A one-sided truncation of a bounded base must not widen its support —
+        # `Truncated(Exponential(); upper=1)` once mapped ℝ → (-∞, 1) in flat space, letting
+        # samplers reach a logpdf = -Inf region (negative flux + a frozen NUTS chain).
+        @testset "one-sided truncation keeps the base support" begin
+            dexp = PT.Truncated(Exponential(); upper = 1.0)
+            refexp = truncated(Exponential(); upper = 1.0)
+            @test minimum(dexp) == minimum(refexp) == 0.0
+            @test maximum(dexp) == maximum(refexp) == 1.0
+            # an explicit out-of-support bound must not widen the support either
+            @test minimum(PT.Truncated(Exponential(), -5.0, 1.0)) == 0.0
+            # the flat transform respects the support for any latent value
+            dto = transport_to(dexp, TVFlat())
+            for y in (-30.0, 0.0, 30.0)
+                x = transport(dto, [y])
+                @test 0.0 <= x <= 1.0
+                @test isfinite(logpdf(dexp, max(x, eps())))
+            end
+            # scalar ScaleShift pushforward bases report their support (and flip with s < 0)
+            dscaled = PT.PushforwardDistribution(PT.ScaleShift(0.0, 0.1), StdExponential())
+            @test minimum(dscaled) == 0.0 && maximum(dscaled) == Inf
+            dneg = PT.PushforwardDistribution(PT.ScaleShift(0.0, -1.0), StdExponential())
+            @test minimum(dneg) == -Inf && maximum(dneg) == 0.0
+            # ...so a one-sided truncation of a scaled base is bounded in flat space too
+            dts = transport_to(PT.Truncated(dscaled; upper = 1.0), TVFlat())
+            for y in (-30.0, 0.0, 30.0)
+                x = transport(dts, [y])
+                @test 0.0 <= x <= 1.0
+            end
+        end
     end
 
     @testset "angular: DiagonalVonMises / WrappedUniform" begin
