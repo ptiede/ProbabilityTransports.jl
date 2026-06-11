@@ -600,6 +600,10 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
             @test maximum(dexp) == maximum(refexp) == 1.0
             # an explicit out-of-support bound must not widen the support either
             @test minimum(PT.Truncated(Exponential(), -5.0, 1.0)) == 0.0
+            # insupport derives from the same endpoints (single source of truth)
+            @test insupport(dexp, 0.0) && insupport(dexp, 1.0)
+            @test !insupport(dexp, -eps()) && !insupport(dexp, nextfloat(1.0))
+            @test !insupport(PT.Truncated(Exponential(), -5.0, 1.0), -1.0)
             # the flat transform respects the support for any latent value
             dto = transport_to(dexp, TVFlat())
             for y in (-30.0, 0.0, 30.0)
