@@ -17,32 +17,32 @@ using LinearAlgebra: norm
 # methods below cover composites, clamped values and pushforwards too), so the whole
 # flat path runs on TV's own machinery — no core Jacobian plumbing is involved. A
 # `TV.AbstractTransform` cannot subtype our `AbstractTransport` (no retroactive
-# subtyping across packages), so we forward the value/pullback drivers here.
+# subtyping across packages), so we forward the value/latent_pback drivers here.
 
 PT.dimension(t::TV.AbstractTransform) = TV.dimension(t)
 
 # Value-only step: ask TV for `NoLogJac` (exactly what `TV.transform` does) so we don't
 # materialize the per-element log-Jacobian buffer that `LogJac` allocates.
-function PT.transport_step(t::TV.AbstractTransform, y, index)
+function PT.pfwd_step(t::TV.AbstractTransform, y, index)
     val, _, index′ = TV.transform_with(TV.NoLogJac(), t, y, index)
     return val, index′
 end
 
-PT.pullback_step!(y, index, t::TV.AbstractTransform, x) = TV.inverse_at!(y, index, t, x)
-PT.pullback_eltype(t::TV.AbstractTransform, ::Type{T}) where {T} = TV.inverse_eltype(t, T)
+PT.pback_step!(y, index, t::TV.AbstractTransform, x) = TV.inverse_at!(y, index, t, x)
+PT.pback_eltype(t::TV.AbstractTransform, ::Type{T}) where {T} = TV.inverse_eltype(t, T)
 
 # Standalone-leaf drivers: TV transforms are not `<: AbstractTransport`, so they do not
-# inherit the core `transport`/`pullback` drivers. These delegate through the step
+# inherit the core `latent_pfwd`/`latent_pback` drivers. These delegate through the step
 # protocol (which handles scalar-in-a-vector correctly).
-PT.transport(t::TV.AbstractTransform, y) = first(PT.transport_step(t, y, firstindex(y)))
-function PT.pullback!(y, t::TV.AbstractTransform, x)
-    PT.pullback_step!(y, firstindex(y), t, x)
+PT.latent_pfwd(t::TV.AbstractTransform, y) = first(PT.pfwd_step(t, y, firstindex(y)))
+function PT.latent_pback!(y, t::TV.AbstractTransform, x)
+    PT.pback_step!(y, firstindex(y), t, x)
     return y
 end
-# Flat path keeps the x-dependent `pullback_eltype(t, ::Type)` (TV's `inverse_eltype` — a
+# Flat path keeps the x-dependent `pback_eltype(t, ::Type)` (TV's `inverse_eltype` — a
 # genuine change of variables can change the type), unlike the Std-space core.
-PT.pullback(t::TV.AbstractTransform, x) =
-    PT.pullback!(Vector{PT.pullback_eltype(t, typeof(x))}(undef, TV.dimension(t)), t, x)
+PT.latent_pback(t::TV.AbstractTransform, x) =
+    PT.latent_pback!(Vector{PT.pback_eltype(t, typeof(x))}(undef, TV.dimension(t)), t, x)
 
 # `transport_to` is specialized on `AbstractStdDist` in core (with a concrete-eltype
 # check); `TVFlat` has no Std reference eltype to constrain, so it gets its own method
@@ -57,9 +57,9 @@ end
 # Flat-space density. `stop === nothing`, and the transport node is always a TV
 # transform, so the genuine change of variables comes straight from TV's `LogJac`
 # (`transform_with` via the index protocol handles a scalar transform fed a 1-vector).
-# This is the *only* `transport_and_logdensity` method that forms a Jacobian; the Std
+# This is the *only* `latent_pfwd_and_logdensity` method that forms a Jacobian; the Std
 # spaces (in `transported.jl`) return the closed-form reference instead.
-function PT.transport_and_logdensity(d::PT.TransportedDistribution{<:Any, <:Any, Nothing}, y)
+function PT.latent_pfwd_and_logdensity(d::PT.TransportedDistribution{<:Any, <:Any, Nothing}, y)
     x, ℓ, _ = TV.transform_with(TV.LogJac(), getfield(d, :transport), y, firstindex(y))
     return x, Dists.logpdf(getfield(d, :start), x) + ℓ
 end
@@ -69,7 +69,7 @@ end
 # Each method is more specific (on the TVFlat space) than the core `transport_node`
 # methods, so there is no ambiguity. Composites, clamped values and pushforwards are
 # handled below too, so under `TVFlat` the whole tree is a single TV transform.
-# `stop === nothing` makes `logpdf == logpdf_fwd` for the flat space.
+# `stop === nothing` makes `logpdf == logpdf_pfwd` for the flat space.
 
 function _interval(d::Dists.UnivariateDistribution)
     s = Dists.support(d)
@@ -281,6 +281,18 @@ function TV.inverse_at!(
         ix += 1
     end
     return index + TV.dimension(t)
+end
+
+# Scalar (single) `SphericalUnitVector` inverse: `y` is the unit-vector `NTuple`; write its
+# components straight back as the representative latent point (the section of the
+# normalisation map). The `ArrayTransformation` method above handles the vector-of-directions
+# case; without this one, `latent_pback`/`inverse` of a standalone transform `MethodError`s.
+function TV.inverse_at!(x, index, ::SphericalUnitVector{N}, y::NTuple) where {N}
+    @assert length(y) == N + 1
+    ntuple(Val(N + 1)) do j
+        PT._rsetindex!(x, PT._rgetindex(y, j), index + j - 1)
+    end
+    return index + N + 1
 end
 
 # Constructor functions declared in core (so callers can build these transforms

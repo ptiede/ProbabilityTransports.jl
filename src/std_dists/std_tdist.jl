@@ -84,10 +84,9 @@ end
 
 # ----- support / moments --------------------------------------------------
 
-Dists.insupport(::StdTDist, ::Number) = true
-# `<:Real` overload breaks ambiguity with Distributions' generic
-# `insupport(::ContinuousUnivariateDistribution, ::Number)`.
-Dists.insupport(::StdTDist, ::Real) = true
+# `@with_real` also emits the `::Real` overload that breaks the ambiguity with
+# Distributions' generic `insupport(::ContinuousUnivariateDistribution, ::Real)`.
+@with_real Dists.insupport(::StdTDist, ::Number) = true
 Dists.insupport(d::StdTDist, x::AbstractArray) = size(d) == size(x)
 Base.minimum(::StdTDist{T, <:Any, 0}) where {T} = T(-Inf)
 Base.maximum(::StdTDist{T, <:Any, 0}) where {T} = T(Inf)

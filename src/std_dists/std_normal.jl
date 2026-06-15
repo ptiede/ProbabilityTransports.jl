@@ -1,8 +1,7 @@
-# StdNormal — standard zero-mean unit-variance normal of arbitrary shape.
-# Pre-existed in `src/srf.jl` (used by `StationaryRandomField`); we moved it
-# here for consistency with the other Std bases. The struct itself is
-# unchanged so existing references in `srf.jl` and `markovrf/gmrf.jl` remain
-# valid.
+# StdNormal — standard zero-mean unit-variance normal of arbitrary shape. The
+# matching base for every Gaussian image prior: under `StdNormal` its transport is
+# the vectorized identity (no cdf/quantile), which is what keeps those priors fast
+# and Reactant-traceable.
 
 struct StdNormal{T, N} <: AbstractStdDist{T, N}
     dims::Dims{N}
@@ -13,8 +12,7 @@ StdNormal(d::Int...) = StdNormal(d)
 StdNormal{T}(d::Dims{N}) where {T, N} = StdNormal{T, N}(d)
 StdNormal{T}(d::Int...) where {T} = StdNormal{T}(d)
 
-Dists.insupport(::StdNormal, ::Number) = true
-Dists.insupport(::StdNormal, ::Real) = true
+@with_real Dists.insupport(::StdNormal, ::Number) = true
 Dists.insupport(::StdNormal, x::AbstractArray) = true
 Base.minimum(::StdNormal{T, 0}) where {T} = T(-Inf)
 Base.maximum(::StdNormal{T, 0}) where {T} = T(Inf)

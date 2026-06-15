@@ -6,15 +6,31 @@ using Random
 using LinearAlgebra
 import TransformVariables as TV
 using Test
+using Aqua
 
 const PT = ProbabilityTransports
 
+@testset "Aqua quality checks" begin
+    Aqua.test_all(
+        ProbabilityTransports;
+        # `logpdf`/`insupport` are overloaded for our `<:Distribution` subtypes and are
+        # ambiguous with Distributions' broad array fallbacks (e.g. the `AbstractMatrix`
+        # multivariate `insupport`, the 0-dim and deprecated `logpdf` generics) only for
+        # rank/eltype combinations we do not support — those calls are unreachable in
+        # practice. Exclude just those two functions; every other ambiguity check stays on.
+        ambiguities = (exclude = [Distributions.logpdf, Distributions.insupport],),
+        # Test-only `[extras]` (Aqua, Test, Reactant_jll) need no `[compat]`; the weakdeps
+        # (Reactant, TransformVariables) are still checked.
+        deps_compat = (check_extras = false,),
+    )
+end
+
 # ---- independent exactness oracle ------------------------------------------
-# The package no longer computes a Jacobian for Std-space transports (logpdf_fwd ==
-# logpdf(reference) holds by construction), so `logpdf_fwd ≈ logpdf(reference)` would be
+# The package no longer computes a Jacobian for Std-space transports (logpdf_pfwd ==
+# logpdf(reference) holds by construction), so `logpdf_pfwd ≈ logpdf(reference)` would be
 # tautological. We instead reconstruct the pulled-back density with an INDEPENDENT
 # finite-difference Jacobian of the transport map: a wrong map fails
-#     logpdf(start, x) + logabsdet(∂x/∂y) ≈ logpdf_fwd(dto, y).
+#     logpdf(start, x) + logabsdet(∂x/∂y) ≈ logpdf_pfwd(dto, y).
 # This works for any bijective (square) map and for the dimension-reducing
 # stick-breaking / simplex maps (K → K-1), which drop the redundant last coordinate.
 _flatten(x::Number) = [float(x)]
@@ -23,7 +39,7 @@ _flatten(x::Union{Tuple, NamedTuple}) =
     isempty(x) ? Float64[] : reduce(vcat, map(_flatten, values(x)))
 
 function fd_logjac(dto, y)
-    f = yy -> _flatten(transport(dto, yy))
+    f = yy -> _flatten(latent_pfwd(dto, yy))
     n = length(y)
     g = length(f(y)) == n ? f : (yy -> f(yy)[1:n])   # dim-reducing: drop redundant coord
     h = 1.0e-6
@@ -36,8 +52,8 @@ function fd_logjac(dto, y)
     return first(logabsdet(J))
 end
 
-# independent reconstruction of logpdf_fwd; compare to the package's value.
-fd_fwd(dto, start, y) = logpdf(start, transport(dto, y)) + fd_logjac(dto, y)
+# independent reconstruction of logpdf_pfwd; compare to the package's value.
+fd_fwd(dto, start, y) = logpdf(start, latent_pfwd(dto, y)) + fd_logjac(dto, y)
 
 # ---- a data-dependent pushforward map (x = exp.(z)) for the general-map tests ----
 # Exercises the non-affine PushforwardDistribution path: `const_logdet(ExpMap()) ==
@@ -67,36 +83,36 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
         end
     end
 
-    @testset "scalar round-trip (transport ∘ pullback)" begin
+    @testset "scalar round-trip (transport ∘ latent_pback)" begin
         rng = MersenneTwister(1)
         for D in (Normal(2.0, 3.0), Gamma(2.0, 1.5), Exponential(1.3), Beta(2.0, 3.0))
             for S in (StdNormal(), StdUniform())
                 dto = transport_to(D, S)
                 y = rand(rng, dto)
-                @test transport(dto, pullback(dto, transport(dto, y))) ≈ transport(dto, y)
-                @test pullback(dto, transport(dto, y)) ≈ y
+                @test latent_pfwd(dto, latent_pback(dto, latent_pfwd(dto, y))) ≈ latent_pfwd(dto, y)
+                @test latent_pback(dto, latent_pfwd(dto, y)) ≈ y
             end
         end
     end
 
-    @testset "equal-dim coincidence: logpdf_fwd == logpdf(StdNormal)" begin
+    @testset "equal-dim coincidence: logpdf_pfwd == logpdf(StdNormal)" begin
         rng = MersenneTwister(2)
         for D in (Normal(1.0, 2.0), Gamma(2.7, 1.3), Exponential(0.8))
             dto = transport_to(D, StdNormal())
             y = randn(rng, dimension(dto))
             # sampler targets the reference; exactness checked independently (FD)
             @test logpdf(dto, y) ≈ logpdf(StdNormal(dimension(dto)), y)
-            @test isapprox(fd_fwd(dto, D, y), logpdf_fwd(dto, y); atol = 1e-5)
+            @test isapprox(fd_fwd(dto, D, y), logpdf_pfwd(dto, y); atol = 1e-5)
         end
     end
 
-    @testset "StdUniform pullback density is flat (== 0)" begin
+    @testset "StdUniform latent_pback density is flat (== 0)" begin
         rng = MersenneTwister(3)
         for D in (Gamma(2.0, 3.0), Beta(2.0, 2.0), product_distribution([Normal(), Gamma(2.0)]))
             dto = transport_to(D, StdUniform())
             u = rand(rng, dimension(dto))
-            @test isapprox(logpdf_fwd(dto, u), 0.0; atol = 1e-10)
-            @test isapprox(fd_fwd(dto, D, u), logpdf_fwd(dto, u); atol = 1e-5)   # exactness
+            @test isapprox(logpdf_pfwd(dto, u), 0.0; atol = 1e-10)
+            @test isapprox(fd_fwd(dto, D, u), logpdf_pfwd(dto, u); atol = 1e-5)   # exactness
         end
     end
 
@@ -107,8 +123,8 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
             dto = transport_to(P, S)
             @test dimension(dto) == 3
             y = rand(rng, dto)
-            x = transport(dto, y)
-            @test pullback(dto, x) ≈ y
+            x = latent_pfwd(dto, y)
+            @test latent_pback(dto, x) ≈ y
         end
     end
 
@@ -124,10 +140,10 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
             dto = transport_to(nd, S)
             @test dimension(dto) == 3
             y = rand(rng, dto)
-            x = transport(dto, y)
-            bref = transport(transport_to(Normal(10.0, 0.1), S), y[3:3])
+            x = latent_pfwd(dto, y)
+            bref = latent_pfwd(transport_to(Normal(10.0, 0.1), S), y[3:3])
             @test x.b ≈ bref
-            @test pullback(dto, x) ≈ y
+            @test latent_pback(dto, x) ≈ y
         end
         # plain-Tuple composite, Product first
         dto = transport_to(
@@ -135,9 +151,9 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
             StdUniform(),
         )
         u = rand(MersenneTwister(19), dimension(dto))
-        xt = transport(dto, u)
+        xt = latent_pfwd(dto, u)
         @test xt[2] ≈ 2.0 + u[3]
-        @test pullback(dto, xt) ≈ u
+        @test latent_pback(dto, xt) ≈ u
     end
 
     @testset "build-time errors for unsupported transports" begin
@@ -156,15 +172,15 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
             dto = transport_to(nd, S)
             @test dimension(dto) == 4
             y = rand(rng, dto)
-            x = transport(dto, y)
+            x = latent_pfwd(dto, y)
             @test x isa NamedTuple{(:a, :b, :c)}
-            @test pullback(dto, x) ≈ y
+            @test latent_pback(dto, x) ≈ y
         end
         # coincidence under StdNormal
         dto = transport_to(nd, StdNormal())
         y = randn(rng, dimension(dto))
         @test logpdf(dto, y) ≈ logpdf(StdNormal(dimension(dto)), y)
-        @test isapprox(fd_fwd(dto, nd, y), logpdf_fwd(dto, y); atol = 1e-5)
+        @test isapprox(fd_fwd(dto, nd, y), logpdf_pfwd(dto, y); atol = 1e-5)
     end
 
     @testset "Affine / LocationScale pushforward" begin
@@ -174,9 +190,9 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
         dto = transport_to(D, StdNormal())
         base = transport_to(Gamma(2.5, 1.3), StdNormal())
         y = randn(rng, 1)
-        @test transport(dto, y) ≈ 1.0 + 2.0 * transport(base, y)
-        @test isapprox(fd_fwd(dto, D, y), logpdf_fwd(dto, y); atol = 1e-5)
-        @test pullback(dto, transport(dto, y)) ≈ y
+        @test latent_pfwd(dto, y) ≈ 1.0 + 2.0 * latent_pfwd(base, y)
+        @test isapprox(fd_fwd(dto, D, y), logpdf_pfwd(dto, y); atol = 1e-5)
+        @test latent_pback(dto, latent_pfwd(dto, y)) ≈ y
     end
 
     @testset "cheap scalar specializations (no erf/erfinv)" begin
@@ -184,14 +200,14 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
         Dn = Normal(3.0, 2.0)
         dn = transport_to(Dn, StdNormal())
         y = randn(rng, 1)
-        @test transport(dn, y) ≈ 3.0 + 2.0 * y[1]
-        @test isapprox(fd_fwd(dn, Dn, y), logpdf_fwd(dn, y); atol = 1e-5)
+        @test latent_pfwd(dn, y) ≈ 3.0 + 2.0 * y[1]
+        @test isapprox(fd_fwd(dn, Dn, y), logpdf_pfwd(dn, y); atol = 1e-5)
         Du = Uniform(2.0, 5.0)
         du = transport_to(Du, StdUniform())
         u = rand(rng, 1)
-        @test transport(du, u) ≈ 2.0 + 3.0 * u[1]
-        @test isapprox(logpdf_fwd(du, u), 0.0; atol = 1e-12)
-        @test isapprox(fd_fwd(du, Du, u), logpdf_fwd(du, u); atol = 1e-5)
+        @test latent_pfwd(du, u) ≈ 2.0 + 3.0 * u[1]
+        @test isapprox(logpdf_pfwd(du, u), 0.0; atol = 1e-12)
+        @test isapprox(fd_fwd(du, Du, u), logpdf_pfwd(du, u); atol = 1e-5)
     end
 
     @testset "MvNormal (affine / Cholesky) and DiagNormal" begin
@@ -202,21 +218,21 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
         dto = transport_to(D, StdNormal())
         @test dimension(dto) == 2
         y = randn(rng, 2)
-        @test transport(dto, y) ≈ μ .+ cholesky(Σ).L * y
-        @test isapprox(fd_fwd(dto, D, y), logpdf_fwd(dto, y); atol = 1e-5)   # logdet(L) term
-        @test pullback(dto, transport(dto, y)) ≈ y
+        @test latent_pfwd(dto, y) ≈ μ .+ cholesky(Σ).L * y
+        @test isapprox(fd_fwd(dto, D, y), logpdf_pfwd(dto, y); atol = 1e-5)   # logdet(L) term
+        @test latent_pback(dto, latent_pfwd(dto, y)) ≈ y
         # generic space path
         dtoU = transport_to(D, StdUniform())
         u = rand(rng, 2)
-        @test isapprox(logpdf_fwd(dtoU, u), 0.0; atol = 1e-8)
-        @test isapprox(fd_fwd(dtoU, D, u), logpdf_fwd(dtoU, u); atol = 1e-5)
-        @test pullback(dtoU, transport(dtoU, u)) ≈ u
+        @test isapprox(logpdf_pfwd(dtoU, u), 0.0; atol = 1e-8)
+        @test isapprox(fd_fwd(dtoU, D, u), logpdf_pfwd(dtoU, u); atol = 1e-5)
+        @test latent_pback(dtoU, latent_pfwd(dtoU, u)) ≈ u
         # diagonal
         Dd = MvNormal([0.5, 1.0, -2.0], Diagonal([1.0, 4.0, 0.25]))
         dd = transport_to(Dd, StdNormal())
         yd = randn(rng, 3)
-        @test isapprox(fd_fwd(dd, Dd, yd), logpdf_fwd(dd, yd); atol = 1e-5)
-        @test pullback(dd, transport(dd, yd)) ≈ yd
+        @test isapprox(fd_fwd(dd, Dd, yd), logpdf_pfwd(dd, yd); atol = 1e-5)
+        @test latent_pback(dd, latent_pfwd(dd, yd)) ≈ yd
     end
 
     @testset "Dirichlet (stick-breaking, dim K-1)" begin
@@ -227,18 +243,18 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
             dn = transport_to(D, StdNormal())
             @test dimension(dn) == K - 1
             y = randn(rng, K - 1)
-            x = transport(dn, y)
+            x = latent_pfwd(dn, y)
             @test sum(x) ≈ 1.0
             @test all(x .>= -1e-12)
-            @test pullback(dn, x) ≈ y
-            @test isapprox(fd_fwd(dn, D, y), logpdf_fwd(dn, y); atol = 1e-5)   # dim-reducing
+            @test latent_pback(dn, x) ≈ y
+            @test isapprox(fd_fwd(dn, D, y), logpdf_pfwd(dn, y); atol = 1e-5)   # dim-reducing
             du = transport_to(D, StdUniform())
             u = rand(rng, K - 1)
-            xu = transport(du, u)
+            xu = latent_pfwd(du, u)
             @test sum(xu) ≈ 1.0
-            @test pullback(du, xu) ≈ u
-            @test isapprox(logpdf_fwd(du, u), 0.0; atol = 1e-8)
-            @test isapprox(fd_fwd(du, D, u), logpdf_fwd(du, u); atol = 1e-5)
+            @test latent_pback(du, xu) ≈ u
+            @test isapprox(logpdf_pfwd(du, u), 0.0; atol = 1e-8)
+            @test isapprox(fd_fwd(du, D, u), logpdf_pfwd(du, u); atol = 1e-5)
         end
     end
 
@@ -263,11 +279,11 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
                 dto = transport_to(d, S)
                 @test dimension(dto) == 2
                 y = S === TVFlat() ? randn(rng, 2) : rand(rng, dto)
-                x = transport(dto, y)
+                x = latent_pfwd(dto, y)
                 if S !== TVFlat()
-                    @test isapprox(fd_fwd(dto, d, y), logpdf_fwd(dto, y); atol = 1e-5)   # EXACT
+                    @test isapprox(fd_fwd(dto, d, y), logpdf_pfwd(dto, y); atol = 1e-5)   # EXACT
                 end
-                @test pullback(dto, x) ≈ y
+                @test latent_pback(dto, x) ≈ y
             end
         end
         # concentrates around μ as γ grows (von-Mises-like)
@@ -296,11 +312,11 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
             dto = transport_to(d, S)
             @test dimension(dto) == 2length(μv)
             y = S === TVFlat() ? randn(rng, length(d)) : rand(rng, dto)
-            x = transport(dto, y)
+            x = latent_pfwd(dto, y)
             if S !== TVFlat()
-                @test isapprox(fd_fwd(dto, d, y), logpdf_fwd(dto, y); atol = 1e-5)   # EXACT
+                @test isapprox(fd_fwd(dto, d, y), logpdf_pfwd(dto, y); atol = 1e-5)   # EXACT
             end
-            @test pullback(dto, x) ≈ y
+            @test latent_pback(dto, x) ≈ y
         end
         # product_distribution of scalar directions reconstructs the vector prior
         pd = product_distribution([ProjectedNormal(μv[i], γv[i]) for i in eachindex(μv)])
@@ -315,28 +331,28 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
             dto = transport_to(D, TVFlat())
             @test dimension(dto) == 1
             y = randn(rng)
-            x_pt = transport(dto, [y])
-            @test logpdf(dto, [y]) ≈ logpdf_fwd(dto, [y])               # flat coincidence
-            @test isapprox(fd_fwd(dto, D, [y]), logpdf_fwd(dto, [y]); atol = 1e-5)  # exact density
-            @test pullback(dto, x_pt) ≈ [y]
+            x_pt = latent_pfwd(dto, [y])
+            @test logpdf(dto, [y]) ≈ logpdf_pfwd(dto, [y])               # flat coincidence
+            @test isapprox(fd_fwd(dto, D, [y]), logpdf_pfwd(dto, [y]); atol = 1e-5)  # exact density
+            @test latent_pback(dto, x_pt) ≈ [y]
         end
         # multivariate: matches asflat shape; round-trips
         for D in (MvNormal([1.0, -1.0], [2.0 0.5; 0.5 1.0]), Dirichlet([2.0, 3.0, 1.5]))
             dto = transport_to(D, TVFlat())
             y = randn(rng, dimension(dto))
-            x = transport(dto, y)
-            @test logpdf(dto, y) ≈ logpdf_fwd(dto, y)
-            @test isapprox(fd_fwd(dto, D, y), logpdf_fwd(dto, y); atol = 1e-5)
-            @test pullback(dto, x) ≈ y
+            x = latent_pfwd(dto, y)
+            @test logpdf(dto, y) ≈ logpdf_pfwd(dto, y)
+            @test isapprox(fd_fwd(dto, D, y), logpdf_pfwd(dto, y); atol = 1e-5)
+            @test latent_pback(dto, x) ≈ y
         end
         # nested NamedDist with a Dirichlet leaf
         nd = NamedDist(a = Normal(), b = Gamma(2.0), c = Dirichlet([1.0, 2.0, 3.0]))
         dto = transport_to(nd, TVFlat())
         y = randn(rng, dimension(dto))
-        x = transport(dto, y)
+        x = latent_pfwd(dto, y)
         @test x isa NamedTuple{(:a, :b, :c)}
-        @test logpdf(dto, y) ≈ logpdf_fwd(dto, y)
-        @test pullback(dto, x) ≈ y
+        @test logpdf(dto, y) ≈ logpdf_pfwd(dto, y)
+        @test latent_pback(dto, x) ≈ y
     end
 
     @testset "heterogeneous Product under TVFlat errors; homogeneous works" begin
@@ -348,10 +364,10 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
         Phom = product_distribution([Gamma(2.0, 1.0), Exponential(0.5)])
         dto = transport_to(Phom, TVFlat())
         y = randn(MersenneTwister(20), dimension(dto))
-        x = transport(dto, y)
+        x = latent_pfwd(dto, y)
         @test all(>(0), x)
-        @test isapprox(fd_fwd(dto, Phom, y), logpdf_fwd(dto, y); atol = 1e-5)
-        @test pullback(dto, x) ≈ y
+        @test isapprox(fd_fwd(dto, Phom, y), logpdf_pfwd(dto, y); atol = 1e-5)
+        @test latent_pback(dto, x) ≈ y
     end
 
     @testset "PushforwardDistribution density / sampling" begin
@@ -389,8 +405,8 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
         @test vec(sum(xs; dims = 2)) ./ 20_000 ≈ μ atol = 0.05
         dto = transport_to(da, StdNormal())
         y = rand(rng, dto)
-        @test isapprox(fd_fwd(dto, da, y), logpdf_fwd(dto, y); atol = 1e-5)
-        @test pullback(dto, transport(dto, y)) ≈ y
+        @test isapprox(fd_fwd(dto, da, y), logpdf_pfwd(dto, y); atol = 1e-5)
+        @test latent_pback(dto, latent_pfwd(dto, y)) ≈ y
     end
 
     @testset "data-dependent pushforward map: exp ∘ StdNormal ≡ LogNormal" begin
@@ -408,14 +424,14 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
         # exact transport: f over the matching-base identity (no cdf/quantile)
         dto = transport_to(dln, StdNormal())
         y = randn(rng, 3)
-        @test transport(dto, y) ≈ exp.(y)
-        @test isapprox(fd_fwd(dto, dln, y), logpdf_fwd(dto, y); atol = 1e-5)
-        @test pullback(dto, transport(dto, y)) ≈ y
+        @test latent_pfwd(dto, y) ≈ exp.(y)
+        @test isapprox(fd_fwd(dto, dln, y), logpdf_pfwd(dto, y); atol = 1e-5)
+        @test latent_pback(dto, latent_pfwd(dto, y)) ≈ y
         # flat path: TV threads the data-dependent Jacobian per call
         dtf = transport_to(dln, TVFlat())
         yf = randn(rng, 3)
-        @test isapprox(fd_fwd(dtf, dln, yf), logpdf_fwd(dtf, yf); atol = 1e-5)
-        @test pullback(dtf, transport(dtf, yf)) ≈ yf
+        @test isapprox(fd_fwd(dtf, dln, yf), logpdf_pfwd(dtf, yf); atol = 1e-5)
+        @test latent_pback(dtf, latent_pfwd(dtf, yf)) ≈ yf
     end
 
     @testset "type stability and eltype" begin
@@ -428,10 +444,10 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
         for S in (StdNormal(), StdUniform())
             dto = transport_to(nd, S)
             y = rand(rng, dto)
-            x = @inferred transport(dto, y)
-            @inferred pullback(dto, x)
-            @inferred logpdf_fwd(dto, y)
-            @inferred transport_and_logdensity(dto, y)
+            x = @inferred latent_pfwd(dto, y)
+            @inferred latent_pback(dto, x)
+            @inferred logpdf_pfwd(dto, y)
+            @inferred latent_pfwd_and_logdensity(dto, y)
         end
 
         # eltype follows the latent reference
@@ -460,9 +476,9 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
             for S in (StdNormal(), StdUniform(), TVFlat())
                 dto = transport_to(d, S)
                 y = S === TVFlat() ? randn(rng, dimension(dto)) : rand(rng, dto)
-                x = transport(dto, y)
-                @test isapprox(fd_fwd(dto, d, y), logpdf_fwd(dto, y); atol = 1e-5)
-                @test pullback(dto, x) ≈ y
+                x = latent_pfwd(dto, y)
+                @test isapprox(fd_fwd(dto, d, y), logpdf_pfwd(dto, y); atol = 1e-5)
+                @test latent_pback(dto, x) ≈ y
             end
         end
         # equal-dim coincidence over the Std spaces
@@ -471,13 +487,13 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
             dto = transport_to(d, S)
             y = rand(rng, dto)
             ref = S === StdNormal() ? StdNormal(1) : StdUniform(1)
-            @test logpdf_fwd(dto, y) ≈ logpdf(ref, y)
+            @test logpdf_pfwd(dto, y) ≈ logpdf(ref, y)
         end
     end
 
     @testset "array Std bases + ScaleShift transport are EXACT" begin
-        # exact transport ⇒ logpdf_fwd(y) ≡ logpdf(reference, y) (NOT the tautological
-        # logpdf_fwd == logpdf(d, x)+lj). Guards the scalar-over-array n·log|s| Jacobian
+        # exact transport ⇒ logpdf_pfwd(y) ≡ logpdf(reference, y) (NOT the tautological
+        # logpdf_pfwd == logpdf(d, x)+lj). Guards the scalar-over-array n·log|s| Jacobian
         # and element-wise (vs matrix-product) scale.
         rng = MersenneTwister(16)
         for D in (StdNormal(3), StdNormal(2, 2), StdExponential(3), StdUniform(4))
@@ -485,8 +501,8 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
                 dto = transport_to(D, S)
                 n = dimension(dto)
                 y = rand(rng, dto)
-                @test isapprox(fd_fwd(dto, D, y), logpdf_fwd(dto, y); atol = 1e-5)   # exactness
-                @test pullback(dto, transport(dto, y)) ≈ y
+                @test isapprox(fd_fwd(dto, D, y), logpdf_pfwd(dto, y); atol = 1e-5)   # exactness
+                @test latent_pback(dto, latent_pfwd(dto, y)) ≈ y
             end
         end
         # ScaleShift Jacobian: scalar s over an n-vector is n·log|s|; array is Σ log|sᵢ|
@@ -582,11 +598,11 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
         for S in (StdNormal(), StdUniform(), TVFlat())
             dto = transport_to(d, S)
             y = S === TVFlat() ? randn(rng, dimension(dto)) : rand(rng, dto)
-            x = transport(dto, y)
+            x = latent_pfwd(dto, y)
             xv = x isa AbstractArray ? x[1] : x
             @test -1.0 <= xv <= 2.0
-            @test isapprox(fd_fwd(dto, d, y), logpdf_fwd(dto, y); atol = 1e-5)
-            @test pullback(dto, x) ≈ y
+            @test isapprox(fd_fwd(dto, d, y), logpdf_pfwd(dto, y); atol = 1e-5)
+            @test latent_pback(dto, x) ≈ y
         end
 
         # regression: support endpoints intersect the truncation bounds with the BASE
@@ -607,7 +623,7 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
             # the flat transform respects the support for any latent value
             dto = transport_to(dexp, TVFlat())
             for y in (-30.0, 0.0, 30.0)
-                x = transport(dto, [y])
+                x = latent_pfwd(dto, [y])
                 @test 0.0 <= x <= 1.0
                 @test isfinite(logpdf(dexp, max(x, eps())))
             end
@@ -619,7 +635,7 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
             # ...so a one-sided truncation of a scaled base is bounded in flat space too
             dts = transport_to(PT.Truncated(dscaled; upper = 1.0), TVFlat())
             for y in (-30.0, 0.0, 30.0)
-                x = transport(dts, [y])
+                x = latent_pfwd(dts, [y])
                 @test 0.0 <= x <= 1.0
             end
         end
@@ -650,13 +666,13 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
         dto = transport_to(d, TVFlat())
         @test dimension(dto) == 4
         y = randn(rng, 4)
-        x = transport(dto, y)
+        x = latent_pfwd(dto, y)
         # dimension-reducing (2 reals -> 1 angle): no square Jacobian, so use TV directly
-        x_tv, lj = TV.transform_and_logjac(PT.transport(dto), y)
+        x_tv, lj = TV.transform_and_logjac(PT.transport_node(dto), y)
         @test x isa AbstractVector && length(x) == 2 && all(-π .< x .<= π)
-        @test logpdf(dto, y) ≈ logpdf_fwd(dto, y)                 # flat: stop === nothing
-        @test logpdf_fwd(dto, y) ≈ logpdf(d, x_tv) + lj
-        @test transport(dto, pullback(dto, x)) ≈ x               # section holds one-way
+        @test logpdf(dto, y) ≈ logpdf_pfwd(dto, y)                 # flat: stop === nothing
+        @test logpdf_pfwd(dto, y) ≈ logpdf(d, x_tv) + lj
+        @test latent_pfwd(dto, latent_pback(dto, x)) ≈ x               # section holds one-way
 
         # StdNormal / StdUniform: no exact transport for a circular variable → error
         @test_throws ArgumentError transport_to(d, StdNormal())
@@ -667,10 +683,10 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
         dtw = transport_to(wu, TVFlat())
         @test dimension(dtw) == 6
         yw = randn(rng, 6)
-        xw = transport(dtw, yw)
-        xw_tv, ljw = TV.transform_and_logjac(PT.transport(dtw), yw)
+        xw = latent_pfwd(dtw, yw)
+        xw_tv, ljw = TV.transform_and_logjac(PT.transport_node(dtw), yw)
         @test length(xw) == 3
-        @test logpdf_fwd(dtw, yw) ≈ logpdf(wu, xw_tv) + ljw
+        @test logpdf_pfwd(dtw, yw) ≈ logpdf(wu, xw_tv) + ljw
     end
 
     @testset "DeltaDist (clamped parameter, 0-dim)" begin
@@ -679,9 +695,9 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
         for S in (StdNormal(), StdUniform(), TVFlat())
             dto = transport_to(DeltaDist(5.0), S)
             @test dimension(dto) == 0
-            @test transport(dto, Float64[]) == 5.0
-            @test isapprox(logpdf_fwd(dto, Float64[]), 0.0; atol = 1e-12)
-            @test length(pullback(dto, 5.0)) == 0
+            @test latent_pfwd(dto, Float64[]) == 5.0
+            @test isapprox(logpdf_pfwd(dto, Float64[]), 0.0; atol = 1e-12)
+            @test length(latent_pback(dto, 5.0)) == 0
         end
         # inside a NamedDist: clamps that component, excluded from the latent dim
         nd = NamedDist(a = Normal(), b = DeltaDist([1.0, 2.0]), c = Gamma(2.0))
@@ -689,9 +705,36 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
             dto = transport_to(nd, S)
             @test dimension(dto) == 2
             y = rand(rng, dto)
-            x = transport(dto, y)
+            x = latent_pfwd(dto, y)
             @test x.b == [1.0, 2.0]
-            @test pullback(dto, x) ≈ y
+            @test latent_pback(dto, x) ≈ y
+        end
+    end
+
+    @testset "StdInverseGamma logpdf is -Inf (not a DomainError) out of support" begin
+        # The array path once called `log.(z)` directly and threw on a negative coordinate;
+        # it must now mirror the scalar path and return -Inf so a sampler can't crash on it.
+        for d in (StdInverseGamma(3.0), StdInverseGamma([2.5, 3.0, 4.0]))
+            x = d isa StdInverseGamma{<:Any, <:Number} ? -0.3 : [-0.3, 0.5, 1.2]
+            @test logpdf(d, x) == -Inf
+        end
+        # in-support array value still matches the per-element reference
+        di = StdInverseGamma([2.5, 3.0, 4.0])
+        z = [0.4, 0.9, 1.7]
+        @test logpdf(di, z) ≈ sum(logpdf(InverseGamma(α, 1.0), zi) for (α, zi) in zip([2.5, 3.0, 4.0], z))
+    end
+
+    @testset "SphericalUnitVector scalar transform round-trips (latent_pback)" begin
+        rng = MersenneTwister(31)
+        for N in (1, 2, 3)
+            t = spherical_unit_vector(N)
+            y = randn(rng, N + 1)
+            x = latent_pfwd(t, y)                       # unit vector (NTuple length N+1)
+            @test length(x) == N + 1
+            @test sum(abs2, x) ≈ 1.0
+            yb = latent_pback(t, x)                # was a MethodError before the scalar inverse
+            @test length(yb) == N + 1
+            @test collect(latent_pfwd(t, yb)) ≈ collect(x)   # section: normalise(components) == x
         end
     end
 

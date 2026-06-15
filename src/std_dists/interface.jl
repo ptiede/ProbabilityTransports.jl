@@ -33,24 +33,15 @@ function Dists.logpdf(d::AbstractStdDist{T, 0}, x::Number) where {T}
     return unnormed_logpdf(d, x) + lognorm(d)
 end
 
-function Dists.logpdf(d::AbstractStdDist{T, N}, x::AbstractArray{<:Number, N}) where {T, N}
+@with_real function Dists.logpdf(d::AbstractStdDist{T, N}, x::AbstractArray{<:Number, N}) where {T, N}
     return unnormed_logpdf(d, x) + lognorm(d)
 end
 
-function Dists.logpdf(d::AbstractStdDist{T, N}, x::AbstractArray{<:Real, N}) where {T, N}
-    return unnormed_logpdf(d, x) + lognorm(d)
-end
-
-# Array sampling. Two thin entries delegating to the per-distribution `_std_rand!`,
-# mirroring the `logpdf` overloads above. The `<:Real` method breaks the ambiguity
-# with `Distributions._rand!(::Sampleable{<:ArrayLikeVariate}, ::AbstractArray{<:Real})`
-# (it is strictly more specific in the distribution argument); the `<:Number` method
-# admits traced (Reactant) arrays, whose eltype is not `<:Real`. Each `Std*` defines
-# `_std_rand!`, so the actual sampler lives in exactly one place per distribution.
-function Dists._rand!(rng::AbstractRNG, d::AbstractStdDist{T, N}, x::AbstractArray{<:Number, N}) where {T, N}
-    return _std_rand!(rng, d, x)
-end
-function Dists._rand!(rng::AbstractRNG, d::AbstractStdDist{T, N}, x::AbstractArray{<:Real, N}) where {T, N}
+# Array sampling, delegating to the per-distribution `_std_rand!` so the actual sampler
+# lives in exactly one place. `@with_real` emits the `<:Number` overload (admits traced
+# Reactant arrays) and the `<:Real` companion that breaks the ambiguity with
+# `Distributions._rand!(::Sampleable{<:ArrayLikeVariate}, ::AbstractArray{<:Real})`.
+@with_real function Dists._rand!(rng::AbstractRNG, d::AbstractStdDist{T, N}, x::AbstractArray{<:Number, N}) where {T, N}
     return _std_rand!(rng, d, x)
 end
 

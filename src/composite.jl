@@ -32,16 +32,16 @@ end
 _transport_tuple(y, index, ::Tuple{}) = (), index
 
 function _transport_tuple(y, index, ts)
-    y1, index1 = transport_step(first(ts), y, index)
+    y1, index1 = pfwd_step(first(ts), y, index)
     yr, index2 = _transport_tuple(y, index1, Base.tail(ts))
     return (y1, yr...), index2
 end
 
-function transport_step(c::TupleTransport{<:Tuple}, y, index)
+function pfwd_step(c::TupleTransport{<:Tuple}, y, index)
     return _transport_tuple(y, index, c.transports)
 end
 
-function transport_step(c::TupleTransport{<:NamedTuple}, y, index)
+function pfwd_step(c::TupleTransport{<:NamedTuple}, y, index)
     yt, index′ = _transport_tuple(y, index, values(c.transports))
     return NamedTuple{keys(c.transports)}(yt), index′
 end
@@ -52,22 +52,22 @@ end
 # --- backward stepping (per-component section) ---
 # `Base.tail` recursion (mirroring `_transport_tuple`) — a `for`/`zip` loop over a
 # heterogeneous tuple infers the element as a union and dynamically dispatches
-# `pullback_step!` (type-unstable `index`), which also blocks Reactant tracing.
+# `pback_step!` (type-unstable `index`), which also blocks Reactant tracing.
 
-_pullback_tuple!(y, index, ::Tuple{}, ::Tuple{}) = index
-function _pullback_tuple!(y, index, ts::Tuple, xs::Tuple)
-    index1 = pullback_step!(y, index, first(ts), first(xs))
-    return _pullback_tuple!(y, index1, Base.tail(ts), Base.tail(xs))
+_pback_tuple!(y, index, ::Tuple{}, ::Tuple{}) = index
+function _pback_tuple!(y, index, ts::Tuple, xs::Tuple)
+    index1 = pback_step!(y, index, first(ts), first(xs))
+    return _pback_tuple!(y, index1, Base.tail(ts), Base.tail(xs))
 end
 
-function pullback_step!(y, index, c::TupleTransport{<:Tuple}, x::Tuple)
-    return _pullback_tuple!(y, index, c.transports, x)
+function pback_step!(y, index, c::TupleTransport{<:Tuple}, x::Tuple)
+    return _pback_tuple!(y, index, c.transports, x)
 end
 
-function pullback_step!(y, index, c::TupleTransport{<:NamedTuple}, x::NamedTuple)
+function pback_step!(y, index, c::TupleTransport{<:NamedTuple}, x::NamedTuple)
     xv = NamedTuple{keys(c.transports)}(x)   # reorder / select to match the transports
-    return _pullback_tuple!(y, index, values(c.transports), values(xv))
+    return _pback_tuple!(y, index, values(c.transports), values(xv))
 end
 
-# (`pullback_eltype` falls to the generic `AbstractTransport` method off `space(c)`: the
+# (`pback_eltype` falls to the generic `AbstractTransport` method off `space(c)`: the
 # latent buffer's eltype is the reference space's, so no per-leaf promotion is needed.)

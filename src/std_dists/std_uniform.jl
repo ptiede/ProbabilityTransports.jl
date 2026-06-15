@@ -32,10 +32,9 @@ _std_rand!(rng::AbstractRNG, ::StdUniform, x::AbstractArray) = rand!(rng, x)
 
 # ----- support / moments 
 
-Dists.insupport(::StdUniform, x::Number) = (0 <= x <= 1)
-# `<:Real` overload breaks ambiguity with Distributions' generic
-# `insupport(::ContinuousUnivariateDistribution, ::Real)`.
-Dists.insupport(::StdUniform, x::Real) = (0 <= x <= 1)
+# `@with_real` also emits the `::Real` overload that breaks the ambiguity with
+# Distributions' generic `insupport(::ContinuousUnivariateDistribution, ::Real)`.
+@with_real Dists.insupport(::StdUniform, x::Number) = (0 <= x <= 1)
 function Dists.insupport(d::StdUniform, x::AbstractArray)
     return size(d) == size(x) && all(xi -> 0 <= xi <= 1, x)
 end

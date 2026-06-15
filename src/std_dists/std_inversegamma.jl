@@ -30,18 +30,14 @@ StdInverseGamma(α::AbstractArray) = StdInverseGamma(α, size(α))
 # `loggamma(α)` is the expensive piece for an array `α`; folding it into
 # `lognorm` lets a caller cache it across many `logpdf` evaluations.
 
-@inline function _unnormed_kernel(d::StdInverseGamma, z)
-    α = d.α
-    zsafe = ifelse(z > zero(z), z, oftype(z, 1))
+@inline function _ig_unnormed_elem(α, z)
+    pos = z > zero(z)
+    zsafe = ifelse(pos, z, oftype(z, 1))
     val = -(α + one(α)) * log(zsafe) - inv(zsafe)
-    return ifelse(z > zero(z), val, oftype(z, -Inf))
+    return ifelse(pos, val, oftype(z, -Inf))
 end
-@inline function _unnormed_kernel_sum(d::StdInverseGamma, z)
-    α = d.α
-    log_z = log.(z)
-    inv_z = inv.(z)
-    return -sum((α .+ 1) .* log_z) - sum(inv_z)
-end
+@inline _unnormed_kernel(d::StdInverseGamma, z) = _ig_unnormed_elem(d.α, z)
+@inline _unnormed_kernel_sum(d::StdInverseGamma, z) = sum(_ig_unnormed_elem.(d.α, z))
 
 function unnormed_logpdf(d::StdInverseGamma{T, <:Number, 0}, x::Number) where {T}
     return _unnormed_kernel(d, x)
@@ -74,10 +70,9 @@ end
 
 # ----- support / moments --------------------------------------------------
 
-Dists.insupport(::StdInverseGamma, x::Number) = x > 0
-# `<:Real` overload breaks ambiguity with Distributions' generic
-# `insupport(::ContinuousUnivariateDistribution, ::Real)`.
-Dists.insupport(::StdInverseGamma, x::Real) = x > 0
+# `@with_real` also emits the `::Real` overload that breaks the ambiguity with
+# Distributions' generic `insupport(::ContinuousUnivariateDistribution, ::Real)`.
+@with_real Dists.insupport(::StdInverseGamma, x::Number) = x > 0
 function Dists.insupport(d::StdInverseGamma, x::AbstractArray)
     return size(d) == size(x) && all(>(0), x)
 end
@@ -110,8 +105,7 @@ end
 # StdInverseGamma(α): cdf(x) = Q(α, 1/x), where Q is the regularised upper
 # incomplete gamma. SpecialFunctions provides both directions.
 # Element-wise kernels take `α` directly so they broadcast against either a
-# scalar or a per-element parameter array — used by the ArrayHC ascube path
-# below for the per-element-α specialisation.
+# scalar or a per-element parameter array (used by the array-shaped transport path).
 
 @inline _ig_elem_cdf(α, x) = last(SpecialFunctions.gamma_inc(α, inv(x), 0))
 @inline _ig_elem_quantile(α, p) = inv(SpecialFunctions.gamma_inc_inv(α, one(p) - p, p))

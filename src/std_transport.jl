@@ -25,35 +25,35 @@ transport_node(::StdNormal{T, 0}, space::StdNormal) where {T} = ScalarIdentity(s
 transport_node(::StdUniform{T, 0}, space::StdUniform) where {T} = ScalarIdentity(space)
 
 for (B, S) in ((:StdNormal, :StdNormal), (:StdUniform, :StdUniform))
-    @eval function transport_step(c::ArrayTransport{<:$B, M, <:$S}, y, index) where {M}
+    @eval function pfwd_step(c::ArrayTransport{<:$B, M, <:$S}, y, index) where {M}
         m = prod(c.dims)
         z = reshape(@view(y[index:(index + m - 1)]), c.dims)
         return z, index + m
     end
-    @eval function pullback_step!(y, index, c::ArrayTransport{<:$B, M, <:$S}, x) where {M}
+    @eval function pback_step!(y, index, c::ArrayTransport{<:$B, M, <:$S}, x) where {M}
         m = prod(c.dims)
         @views y[index:(index + m - 1)] .= vec(x)
         return index + m
     end
 end
 
-function transport_step(c::ArrayTransport{<:_ArrayStd}, y, index)
+function pfwd_step(c::ArrayTransport{<:_ArrayStd}, y, index)
     d = c.dist
     m = prod(c.dims)
     T = _ensure_float(eltype(y))
     out = Vector{T}(undef, m)
     @inbounds for i in 1:m
-        xi, index = transport_step(ScalarTransport(_elem_base(d, i), c.space), y, index)
+        xi, index = pfwd_step(ScalarTransport(_elem_base(d, i), c.space), y, index)
         out[i] = xi
     end
     return reshape(out, c.dims), index
 end
 
-function pullback_step!(y, index, c::ArrayTransport{<:_ArrayStd}, x)
+function pback_step!(y, index, c::ArrayTransport{<:_ArrayStd}, x)
     d = c.dist
     xv = vec(x)
     @inbounds for i in eachindex(xv)
-        index = pullback_step!(y, index, ScalarTransport(_elem_base(d, i), c.space), xv[i])
+        index = pback_step!(y, index, ScalarTransport(_elem_base(d, i), c.space), xv[i])
     end
     return index
 end

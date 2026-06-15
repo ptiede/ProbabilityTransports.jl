@@ -44,45 +44,61 @@ end
 # transport from the per-coordinate reference to the Dirichlet (dimension-reducing,
 # K -> K-1). Because it is exact, its pulled-back density under a Std space is the
 # closed-form reference and no Jacobian is needed (only `TVFlat` Dirichlet, handled by
-# TV's `UnitSimplex`, carries a Jacobian). The pullback is the re-derived exact inverse.
+# TV's `UnitSimplex`, carries a Jacobian). The latent_pback is the re-derived exact inverse.
 
 dimension(c::ArrayTransport{<:Dists.Dirichlet}) =
     (prod(c.dims) - 1) * space_dimension(typeof(c.space))
 
-function transport_step(c::ArrayTransport{<:Dists.Dirichlet}, y, index)
+# Regularised incomplete-beta cdf / quantile straight from SpecialFunctions — the same
+# primitives `StdTDist` uses — rather than building a `Dists.Beta` and calling its generic
+# `quantile`/`cdf` (which allocates a distribution object and is not Reactant-traceable).
+# `beta_inc`/`beta_inc_inv` return `(lower, upper)` tails; the lower tail is the cdf.
+@inline _beta_cdf(a, b, x) = first(SpecialFunctions.beta_inc(a, b, x))
+@inline _beta_quantile(a, b, p) = first(SpecialFunctions.beta_inc_inv(a, b, p))
+
+# The stick length `K` is the Dirichlet's parameter count — statically known — so the loop
+# is fully unrolled when traced; only the scalar latent reads/writes need `_rgetindex` /
+# `_rsetindex!` (routed through `@allowscalar` for traced arrays by the Reactant extension).
+function pfwd_step(c::ArrayTransport{<:Dists.Dirichlet}, y, index)
     d = c.dist
     α = d.alpha
     K = length(α)
     m = K - 1
     T = _ensure_float(eltype(y))
-    x = zeros(T, K)
+    x = similar(y, T, K)
     remaining = one(T)
-    β = sum(α)   # running suffix sum: after subtracting α[i] it equals Σ α[(i+1):K]
+    β = T(sum(α))   # running suffix sum: after subtracting α[i] it equals Σ α[(i+1):K]
+    indexr = promote_index(index)
     @inbounds for i in 1:m
-        yi = y[index + i - 1]
-        u = space_cdf(c.space, yi)
-        β -= α[i]
-        φ = quantile(Dists.Beta(T(α[i]), T(β)), u)
-        x[i] = remaining * φ
-        remaining -= x[i]
+        αi = T(_rgetindex(α, i))
+        u = space_cdf(c.space, _rgetindex(y, indexr + (i - 1)))
+        β -= αi
+        φ = _beta_quantile(αi, β, u)
+        xi = remaining * φ
+        _rsetindex!(x, xi, i)
+        remaining -= xi
     end
-    x[K] = remaining
+    _rsetindex!(x, remaining, K)
     return x, index + m
 end
 
-function pullback_step!(y, index, c::ArrayTransport{<:Dists.Dirichlet}, x)
+function pback_step!(y, index, c::ArrayTransport{<:Dists.Dirichlet}, x)
     d = c.dist
     α = d.alpha
     K = length(α)
     m = K - 1
-    remaining = one(eltype(x))
-    β = sum(α)   # running suffix sum, as in `transport_step`
+    T = _ensure_float(eltype(x))
+    remaining = one(T)
+    β = T(sum(α))   # running suffix sum, as in `pfwd_step`
+    indexr = promote_index(index)
     @inbounds for i in 1:m
-        β -= α[i]
-        φ = x[i] / remaining
-        u = cdf(Dists.Beta(α[i], β), φ)
-        y[index + i - 1] = space_quantile(c.space, u)
-        remaining -= x[i]
+        αi = T(_rgetindex(α, i))
+        β -= αi
+        xi = _rgetindex(x, i)
+        φ = xi / remaining
+        u = _beta_cdf(αi, β, φ)
+        _rsetindex!(y, space_quantile(c.space, u), indexr + (i - 1))
+        remaining -= xi
     end
     return index + m
 end

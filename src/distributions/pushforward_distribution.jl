@@ -62,9 +62,7 @@ _pf_scale(f::ScaleShift) = f.s
 _pf_scale(f::AffineTransform) = f.L
 
 # support: x is in support iff f⁻¹(x) is in the base's support
-Dists.insupport(d::PushforwardDistribution{<:Any, <:Any, 0}, x::Number) =
-    Dists.insupport(d.base, inverse(d.f)(x))
-Dists.insupport(d::PushforwardDistribution{<:Any, <:Any, 0}, x::Real) =
+@with_real Dists.insupport(d::PushforwardDistribution{<:Any, <:Any, 0}, x::Number) =
     Dists.insupport(d.base, inverse(d.f)(x))
 function Dists.insupport(d::PushforwardDistribution, x::AbstractArray)
     size(x) == size(d) || return false
@@ -82,12 +80,10 @@ end
     return unnormed_logpdf(d, x) + lognorm(d)
 end
 Dists.logpdf(d::PushforwardDistribution{<:Any, <:Any, 0}, x::Number) = _pushforward_logpdf(d, x)
-# `<:Number` accepts traced arrays (`TracedRNumber <: Number`); the `<:Real` method
-# is more specific on both args and breaks the ambiguity with Distributions' generic
-# `logpdf(::ContinuousDistribution{ArrayLikeVariate{N}}, ::AbstractArray{<:Real,N})`.
-Dists.logpdf(d::PushforwardDistribution{<:Any, <:Any, N}, x::AbstractArray{<:Number, N}) where {N} =
-    _pushforward_logpdf(d, x)
-Dists.logpdf(d::PushforwardDistribution{<:Any, <:Any, N}, x::AbstractArray{<:Real, N}) where {N} =
+# `@with_real` emits the `<:Number` array overload (accepts traced arrays, since
+# `TracedRNumber <: Number`) and the `<:Real` companion that breaks the ambiguity with
+# Distributions' generic `logpdf(::ContinuousDistribution{ArrayLikeVariate{N}}, ::AbstractArray{<:Real,N})`.
+@with_real Dists.logpdf(d::PushforwardDistribution{<:Any, <:Any, N}, x::AbstractArray{<:Number, N}) where {N} =
     _pushforward_logpdf(d, x)
 
 # The data-dependent part of the density. Constant-log-det maps need only the base's
@@ -120,22 +116,18 @@ end
 
 Dists.rand(rng::AbstractRNG, d::PushforwardDistribution) = d.f(rand(rng, d.base))
 
-# Two thin entries delegating to `_pf_rand!`. The `<:Real` method breaks the ambiguity
-# with `Distributions._rand!(::Sampleable{<:ArrayLikeVariate}, ::AbstractArray{<:Real})`
-# (strictly more specific in the distribution argument); the `<:Number` method admits
-# traced (Reactant) arrays, whose eltype is not `<:Real`. Both are restricted to the
-# variate dimension `N` (one draw): an unrestricted signature would also capture the
-# stacked array Distributions passes for `rand(rng, d, n)`, filling all `n` variates
-# with a single broadcast draw.
+# Delegates to `_pf_rand!`. `@with_real` emits the `<:Real` overload that breaks the
+# ambiguity with `Distributions._rand!(::Sampleable{<:ArrayLikeVariate}, ::AbstractArray{<:Real})`
+# (strictly more specific in the distribution argument) and the `<:Number` overload that admits
+# traced (Reactant) arrays, whose eltype is not `<:Real`. Both are restricted to the variate
+# dimension `N` (one draw): an unrestricted signature would also capture the stacked array
+# Distributions passes for `rand(rng, d, n)`, filling all `n` variates with a single broadcast draw.
 function _pf_rand!(rng::AbstractRNG, d::PushforwardDistribution, x::AbstractArray)
     x .= d.f(rand(rng, d.base))
     return x
 end
-Dists._rand!(
+@with_real Dists._rand!(
     rng::AbstractRNG, d::PushforwardDistribution{<:Any, <:Any, N}, x::AbstractArray{<:Number, N}
-) where {N} = _pf_rand!(rng, d, x)
-Dists._rand!(
-    rng::AbstractRNG, d::PushforwardDistribution{<:Any, <:Any, N}, x::AbstractArray{<:Real, N}
 ) where {N} = _pf_rand!(rng, d, x)
 
 # moments: element-wise scale ⇒ `var = scale² var(base)`; matrix scale ⇒
@@ -155,13 +147,11 @@ Dists.cdf(d::PushforwardDistribution{<:ScaleShift, <:Any, 0}, x::Number) =
 Dists.quantile(d::PushforwardDistribution{<:ScaleShift, <:Any, 0}, p::Number) =
     d.f(_std_quantile(d.base, p))
 
-# log-cdf / log-ccdf (used by `Truncated`'s constructor). `log(cdf)`/`log1p(-cdf)`
-# — reuses `cdf`, accepts traced numbers (not just `<:Real`), and traces. The
-# `<:Real` methods break the ambiguity with Distributions' generic logcdf/logccdf.
-Dists.logcdf(d::PushforwardDistribution{<:ScaleShift, <:Any, 0}, x::Number) = log(Dists.cdf(d, x))
-Dists.logcdf(d::PushforwardDistribution{<:ScaleShift, <:Any, 0}, x::Real) = log(Dists.cdf(d, x))
-Dists.logccdf(d::PushforwardDistribution{<:ScaleShift, <:Any, 0}, x::Number) = log1p(-Dists.cdf(d, x))
-Dists.logccdf(d::PushforwardDistribution{<:ScaleShift, <:Any, 0}, x::Real) = log1p(-Dists.cdf(d, x))
+# log-cdf / log-ccdf (used by `Truncated`'s constructor). `log(cdf)`/`log1p(-cdf)` — reuses
+# `cdf`, accepts traced numbers, and traces. `@with_real` also emits the `<:Real` overloads
+# that break the ambiguity with Distributions' generic `logcdf`/`logccdf`.
+@with_real Dists.logcdf(d::PushforwardDistribution{<:ScaleShift, <:Any, 0}, x::Number) = log(Dists.cdf(d, x))
+@with_real Dists.logccdf(d::PushforwardDistribution{<:ScaleShift, <:Any, 0}, x::Number) = log1p(-Dists.cdf(d, x))
 
 function Base.show(io::IO, d::PushforwardDistribution)
     print(io, "PushforwardDistribution(f=", nameof(typeof(d.f)), ", base=", nameof(typeof(d.base)))

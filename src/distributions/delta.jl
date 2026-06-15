@@ -35,11 +35,11 @@ end
 dimension(::ConstantTransport) = 0
 transport_node(d::DeltaDist, space) = ConstantTransport(d.x0)
 
-transport_step(c::ConstantTransport, y, index) = (c.value, index)
+pfwd_step(c::ConstantTransport, y, index) = (c.value, index)
 # (Under `TVFlat`, a clamped value is `TV.Constant` — see the TV extension — so this
 # core node only serves the Std spaces.)
-pullback_step!(y, index, ::ConstantTransport, x) = index
-pullback_eltype(::ConstantTransport) = Bool
+pback_step!(y, index, ::ConstantTransport, x) = index
+pback_eltype(::ConstantTransport) = Bool
 
 # A standalone clamped value transports to a 0-dimensional latent reference, whose latent
 # log-density is identically 0 (no coordinates to score). Resolve it here, on the constant

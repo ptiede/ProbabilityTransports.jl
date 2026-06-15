@@ -65,8 +65,7 @@ Dists.params(d::Truncated) = (Dists.params(d.untruncated)..., d.lower, d.upper)
 # Branchless `&` (not Distributions' generic chained `<=`, which short-circuits) so the
 # check traces under Reactant.
 @inline _in_support(d::Truncated, x) = (Base.minimum(d) <= x) & (x <= Base.maximum(d))
-Dists.insupport(d::Truncated, x::Number) = _in_support(d, x)
-Dists.insupport(d::Truncated, x::Real) = _in_support(d, x)
+@with_real Dists.insupport(d::Truncated, x::Number) = _in_support(d, x)
 
 function unnormed_logpdf(d::Truncated, x::Number)
     base_lpdf = Dists.logpdf(d.untruncated, x)
@@ -74,8 +73,7 @@ function unnormed_logpdf(d::Truncated, x::Number)
 end
 @inline lognorm(d::Truncated) = -d.logtp
 
-Dists.logpdf(d::Truncated, x::Number) = unnormed_logpdf(d, x) + lognorm(d)
-Dists.logpdf(d::Truncated, x::Real) = unnormed_logpdf(d, x) + lognorm(d)
+@with_real Dists.logpdf(d::Truncated, x::Number) = unnormed_logpdf(d, x) + lognorm(d)
 
 function Dists.cdf(d::Truncated, x::Number)
     raw = (Dists.cdf(d.untruncated, x) - d.lcdf) * exp(-d.logtp)

@@ -71,20 +71,20 @@ end
 dimension(c::PushforwardTransport) = dimension(c.inner)   # invertible f ⇒ equal-dim
 space(c::PushforwardTransport) = space(c.inner)
 
-function transport_step(c::PushforwardTransport, y, index)
-    z, index′ = transport_step(c.inner, y, index)
+function pfwd_step(c::PushforwardTransport, y, index)
+    z, index′ = pfwd_step(c.inner, y, index)
     return c.f(z), index′
 end
 
 # (Under `TVFlat`, a pushforward is a TV `PushforwardTransform` — see the TV extension
 # — so this core node only serves the Jacobian-free Std spaces.)
 
-function pullback_step!(y, index, c::PushforwardTransport, x)
+function pback_step!(y, index, c::PushforwardTransport, x)
     z = inverse(c.f)(x)
-    return pullback_step!(y, index, c.inner, z)
+    return pback_step!(y, index, c.inner, z)
 end
 
-# (`pullback_eltype` falls to the generic `AbstractTransport` method off `space(c)`, which
+# (`pback_eltype` falls to the generic `AbstractTransport` method off `space(c)`, which
 # for a `PushforwardTransport` delegates to `space(c.inner)`.)
 
 # ----- identity inner nodes -----------------------------------------------
@@ -96,7 +96,7 @@ struct ScalarIdentity{S} <: AbstractTransport
     space::S
 end
 dimension(::ScalarIdentity) = 1
-function transport_step(c::ScalarIdentity, y, index)
+function pfwd_step(c::ScalarIdentity, y, index)
     return _rgetindex(y, index), index + 1
 end
-pullback_step!(y, index, ::ScalarIdentity, z::Number) = (_rsetindex!(y, z, index); index + 1)
+pback_step!(y, index, ::ScalarIdentity, z::Number) = (_rsetindex!(y, z, index); index + 1)
