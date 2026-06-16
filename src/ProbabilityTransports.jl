@@ -28,7 +28,8 @@ using ReactantCore: @trace, within_compile, promote_to_traced
 using Bessels: besseli0x
 
 export StdNormal, StdUniform, StdExponential, StdTDist, StdInverseGamma, TVFlat
-export NamedDist, TupleDist, DiagonalVonMises, WrappedUniform, DeltaDist, ProjectedNormal
+export NamedDist, TupleDist, DiagonalVonMises, WrappedUniform, DeltaDist, ProjectedNormal,
+    AngularProjectedNormal
 # Don't export dimension due to potential method ambiguities with TransformVariables
 export transport_to, transport_node, latent_pfwd, latent_pfwd_and_logdensity, latent_pback, latent_pback!, logpdf_pfwd
 export TransportedDistribution, PushforwardDistribution

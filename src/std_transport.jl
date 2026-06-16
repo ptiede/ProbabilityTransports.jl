@@ -37,33 +37,33 @@ for (B, S) in ((:StdNormal, :StdNormal), (:StdUniform, :StdUniform))
     end
 end
 
-# Generic per-element fallback for a *non-matching* base→space (e.g. an array StdExponential
-# base targeting StdNormal, or any array base whose space differs from it). It walks the scalar
-# cdf/quantile path element-by-element. The buffer follows the backend (`similar(y, …)`) and the
-# loop is `@trace`d, so the structure itself traces — but the per-element scalar `cdf`/`quantile`
-# (erf/erfinv, gamma_inc, …) are host calls, so a *mismatched*-base array transport does not
-# fully lower under Reactant. That's fine: the Reactant-fast path is the matching base→space
-# identity vectorized above (`:27-38`), which is the one Gaussian image priors actually take.
+# Generic *non-matching* base→space transport (e.g. an array StdExponential base targeting
+# StdNormal, or any array base whose space differs from it). Same scalar factoring as
+# `ScalarTransport` — `x = Q_D(F_S(y))` forward, `u = F_D(x); y = Q_S(u)` back — but applied to a
+# contiguous `m`-block of `y` with *broadcasts* instead of a scalar `out[i] = …` loop. That keeps
+# it allocation-shaped to the backend AND lowers fully under Reactant: the scalar `setindex!` the
+# old `@trace` loop used is disallowed on traced arrays, whereas the broadcasts below become
+# elementwise traced ops (the per-element `cdf`/`quantile` — erf/erfinv, log, … — lower as scalar
+# kernels). Element bases are homogeneous for the scalar-parameter Std families
+# (StdNormal/StdUniform/StdExponential and Number-parameter StdInverseGamma/StdTDist); the
+# array-parameter families broadcast their per-element params (eager only, as before).
+_elem_bases(d::Union{StdNormal, StdUniform, StdExponential}) = Ref(_elem_base(d, 1))
+_elem_bases(d::StdInverseGamma{T, <:Number}) where {T} = Ref(_elem_base(d, 1))
+_elem_bases(d::StdTDist{T, <:Number}) where {T} = Ref(_elem_base(d, 1))
+_elem_bases(d::StdInverseGamma{T, <:AbstractArray}) where {T} = StdInverseGamma.(d.α, Ref(()))
+_elem_bases(d::StdTDist{T, <:AbstractArray}) where {T} = StdTDist.(d.ν, Ref(()))
+
 function pfwd_step(c::ArrayTransport{<:_ArrayStd}, y, index)
-    d = c.dist
     m = prod(c.dims)
-    T = _ensure_float(eltype(y))
-    out = similar(y, T, m)
-    index0 = promote_index(index)
-    @trace track_numbers=false for i in eachindex(out)
-        xi, index0 = pfwd_step(ScalarTransport(_elem_base(d, i), c.space), y, index0)
-        out[i] = xi
-        nothing
-    end
-    return reshape(out, c.dims), index + m
+    yv = @view y[index:(index + m - 1)]
+    u = space_cdf.(Ref(c.space), yv)              # F_S : latent → [0,1]
+    x = quantile.(_elem_bases(c.dist), u)         # Q_D : [0,1] → target value
+    return reshape(x, c.dims), index + m
 end
 
 function pback_step!(y, index, c::ArrayTransport{<:_ArrayStd}, x)
-    d = c.dist
-    xv = vec(x)
-    index0 = promote_index(index)
-    @trace track_numbers=false for i in eachindex(xv)
-        index0 = pback_step!(y, index0, ScalarTransport(_elem_base(d, i), c.space), xv[i])
-    end
-    return index0
+    m = prod(c.dims)
+    u = cdf.(_elem_bases(c.dist), vec(x))                                  # F_D : target → [0,1]
+    @views y[index:(index + m - 1)] .= space_quantile.(Ref(c.space), u)    # Q_S : [0,1] → latent
+    return index + m
 end

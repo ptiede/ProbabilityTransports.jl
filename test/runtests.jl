@@ -324,6 +324,75 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
         @test mean(pd) ≈ mean(d)
     end
 
+    @testset "AngularProjectedNormal: angle-valued, transports EXACTLY to Std" begin
+        rng = MersenneTwister(23)
+        # single-arg constructor reads μ, γ off the mean vector
+        @test AngularProjectedNormal([0.0, 2.0]).μ ≈ π / 2
+        @test AngularProjectedNormal([0.0, 2.0]).γ ≈ 2.0
+
+        for (μ, γ) in [(0.0, 3.0), (π / 3, 1.5), (0.0, 0.0)]
+            d = AngularProjectedNormal(μ, γ)
+            pn = ProjectedNormal(μ, γ)
+            @test length(d) == 1            # angle-valued (ProjectedNormal would be 2)
+            for S in (StdNormal(), StdUniform())
+                dto = transport_to(d, S)
+                @test dimension(dto) == 2   # latent stays 2n
+                y = rand(rng, dto)          # 2n latent draw
+                θ = latent_pfwd(dto, y)     # n angle(s)
+                @test length(θ) == 1
+                # the angle is exactly atan² of the ProjectedNormal embedding at the same latent
+                xpn = latent_pfwd(transport_to(pn, S), y)
+                @test θ[1] ≈ atan(xpn[2], xpn[1])
+                # angle round-trips through the unit-radius section
+                @test latent_pfwd(dto, latent_pback(dto, θ)) ≈ θ
+            end
+        end
+
+        # closed-form logpdf vs an independent numerical radius-integral
+        #   f(θ) = ∫₀^∞ (1/2π) r exp(-½‖r·u(θ) - ν‖²) dr
+        for (μ, γ, θ) in [(0.3, 2.0, 0.5), (0.0, 0.0, 1.0), (-0.7, 1.2, -2.0)]
+            d = AngularProjectedNormal(μ, γ)
+            u = (cos(θ), sin(θ));  ν = (γ * cos(μ), γ * sin(μ))
+            rs = range(0, 30; length = 300_000); dr = step(rs)
+            fnum = sum(r -> (1 / (2π)) * r *
+                            exp(-((r * u[1] - ν[1])^2 + (r * u[2] - ν[2])^2) / 2), rs) * dr
+            @test exp(logpdf(d, [θ])) ≈ fnum rtol = 1e-2
+        end
+
+        # density normalizes over the circle (periodic Riemann sum is spectrally accurate)
+        let d = AngularProjectedNormal(0.4, 1.7)
+            θs = range(-π, π; length = 20_000); dθ = step(θs)
+            @test sum(θ -> exp(logpdf(d, [θ])), θs) * dθ ≈ 1.0 atol = 1e-3
+        end
+
+        # concentrates around μ as γ grows (von-Mises-like)
+        function meanres(μ, γ)
+            d = AngularProjectedNormal(μ, γ); s = 0.0
+            for _ in 1:100_000
+                s += cos(rand(rng, d)[1] - μ)
+            end
+            return s / 100_000
+        end
+        @test meanres(0.0, 0.0) < 0.05
+        @test meanres(0.0, 3.0) > 0.9
+
+        # multivariate: n independent angles, and product_distribution reconstructs it
+        μv = [0.0, π / 3, -π / 2];  γv = [2.0, 0.5, 3.0]
+        d = AngularProjectedNormal(μv, γv)
+        @test length(d) == 3
+        dto = transport_to(d, StdNormal())
+        @test dimension(dto) == 6
+        y = rand(rng, dto);  θ = latent_pfwd(dto, y)
+        @test length(θ) == 3
+        xpn = latent_pfwd(transport_to(ProjectedNormal(μv, γv), StdNormal()), y)
+        for i in 1:3
+            @test θ[i] ≈ atan(xpn[2i], xpn[2i - 1])
+        end
+        pd = product_distribution([AngularProjectedNormal(μv[i], γv[i]) for i in eachindex(μv)])
+        @test length(pd) == 3
+        @test logpdf(pd, θ) ≈ logpdf(d, θ)
+    end
+
     @testset "flat space (TransformVariables extension)" begin
         rng = MersenneTwister(11)
         # univariate: scalar TV transform, vector-in/scalar-out convention
