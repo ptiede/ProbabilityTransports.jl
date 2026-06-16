@@ -23,7 +23,9 @@ StdUniform{T}(dims::Int...) where {T} = StdUniform{T}(dims)
 end
 # sum the branchless per-element kernel: 0 if every element ∈ [0,1], else -Inf
 # (uses `ifelse`, so it still traces under Reactant).
-@inline _unnormed_kernel_sum(d::StdUniform, z) = sum(Base.Fix1(_unnormed_kernel, d), z)
+# `init` keeps a zero-length reference (e.g. the latent measure of an empty prior) at
+# logpdf 0 instead of erroring on an empty reduction.
+@inline _unnormed_kernel_sum(d::StdUniform, z) = sum(Base.Fix1(_unnormed_kernel, d), z; init = zero(eltype(z)))
 
 unnormed_logpdf(d::StdUniform{T, 0}, x::Number) where {T} = _unnormed_kernel(d, x)
 function unnormed_logpdf(d::StdUniform{T, N}, x::AbstractArray{<:Number, N}) where {T, N}
@@ -31,13 +33,13 @@ function unnormed_logpdf(d::StdUniform{T, N}, x::AbstractArray{<:Number, N}) whe
 end
 @inline lognorm(d::StdUniform) = zero(eltype(d))
 
-# ----- sampling 
+# ----- sampling
 
 Random.rand(rng::AbstractRNG, ::StdUniform{T, 0}) where {T} = rand(rng, T)
 _std_rand!(rng::AbstractRNG, ::StdUniform, x::AbstractArray) = rand!(rng, x)
 
 
-# ----- support / moments 
+# ----- support / moments
 
 # `@with_real` also emits the `::Real` overload that breaks the ambiguity with
 # Distributions' generic `insupport(::ContinuousUnivariateDistribution, ::Real)`.
@@ -61,7 +63,7 @@ Dists.mean(d::StdUniform) = fill(eltype(d)(0.5), size(d))
 Dists.var(d::StdUniform) = fill(eltype(d)(1) / eltype(d)(12), size(d))
 
 
-# ----- cdf / quantile 
+# ----- cdf / quantile
 
 @inline _std_cdf(::StdUniform, x) = clamp(x, zero(x), one(x))
 @inline _std_quantile(::StdUniform, p) = p

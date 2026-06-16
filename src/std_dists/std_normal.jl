@@ -22,9 +22,11 @@ Base.minimum(::StdNormal{T, 0}) where {T} = T(-Inf)
 Base.maximum(::StdNormal{T, 0}) where {T} = T(Inf)
 
 
-# ----- log-pdf split 
+# ----- log-pdf split
 @inline _unnormed_kernel(::StdNormal, z) = -z * z / 2
-@inline _unnormed_kernel_sum(::StdNormal, z) = -sum(abs2, z) / 2
+# `init` keeps a zero-length reference (e.g. the latent measure of an empty prior) at
+# logpdf 0 instead of erroring on an empty reduction.
+@inline _unnormed_kernel_sum(::StdNormal, z) = -sum(abs2, z; init = zero(eltype(z))) / 2
 
 unnormed_logpdf(d::StdNormal{T, 0}, x::Number) where {T} = _unnormed_kernel(d, x)
 function unnormed_logpdf(d::StdNormal{T, N}, x::AbstractArray{<:Number, N}) where {T, N}
@@ -34,13 +36,13 @@ end
 @inline lognorm(d::StdNormal) = -length(d) * oftype(zero(eltype(d)), log(2π) / 2)
 
 
-# ----- sampling 
+# ----- sampling
 
 Random.rand(rng::AbstractRNG, ::StdNormal{T, 0}) where {T} = randn(rng, T)
 _std_rand!(rng::AbstractRNG, ::StdNormal, x::AbstractArray) = randn!(rng, x)
 
 
-# ----- moments 
+# ----- moments
 Dists.mean(::StdNormal{T, 0}) where {T} = zero(T)
 Dists.var(::StdNormal{T, 0}) where {T} = one(T)
 Dists.std(::StdNormal{T, 0}) where {T} = one(T)
@@ -49,7 +51,7 @@ Dists.var(d::StdNormal) = ones(eltype(d), size(d))
 Dists.cov(d::StdNormal) = I(length(d))
 
 
-# cdf / quantile 
+# cdf / quantile
 
 @inline _std_cdf(::StdNormal, x) = (one(x) + erf(x / sqrt(oftype(x, 2)))) / 2
 @inline _std_quantile(::StdNormal, p) = sqrt(oftype(p, 2)) * erfinv(2 * p - one(p))
@@ -57,7 +59,7 @@ Dists.cov(d::StdNormal) = I(length(d))
 Dists.cdf(d::StdNormal, x::Number) = _std_cdf(d, x)
 Dists.quantile(d::StdNormal, p::Number) = _std_quantile(d, p)
 
-# transport spaces 
+# transport spaces
 space_cdf(d::StdNormal, y) = _std_cdf(d, y)        # Φ  (defined in StdDists/std_normal.jl)
 space_quantile(d::StdNormal, u) = _std_quantile(d, u)  # Φ⁻¹
 space_logpdf(::StdNormal, y) = -y * y / 2 - oftype(y, log(2π) / 2)
