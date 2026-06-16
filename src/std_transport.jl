@@ -37,23 +37,33 @@ for (B, S) in ((:StdNormal, :StdNormal), (:StdUniform, :StdUniform))
     end
 end
 
+# Generic per-element fallback for a *non-matching* base→space (e.g. an array StdExponential
+# base targeting StdNormal, or any array base whose space differs from it). It walks the scalar
+# cdf/quantile path element-by-element. The buffer follows the backend (`similar(y, …)`) and the
+# loop is `@trace`d, so the structure itself traces — but the per-element scalar `cdf`/`quantile`
+# (erf/erfinv, gamma_inc, …) are host calls, so a *mismatched*-base array transport does not
+# fully lower under Reactant. That's fine: the Reactant-fast path is the matching base→space
+# identity vectorized above (`:27-38`), which is the one Gaussian image priors actually take.
 function pfwd_step(c::ArrayTransport{<:_ArrayStd}, y, index)
     d = c.dist
     m = prod(c.dims)
     T = _ensure_float(eltype(y))
-    out = Vector{T}(undef, m)
-    @inbounds for i in 1:m
-        xi, index = pfwd_step(ScalarTransport(_elem_base(d, i), c.space), y, index)
+    out = similar(y, T, m)
+    index0 = promote_index(index)
+    @trace track_numbers=false for i in eachindex(out)
+        xi, index0 = pfwd_step(ScalarTransport(_elem_base(d, i), c.space), y, index0)
         out[i] = xi
+        nothing
     end
-    return reshape(out, c.dims), index
+    return reshape(out, c.dims), index + m
 end
 
 function pback_step!(y, index, c::ArrayTransport{<:_ArrayStd}, x)
     d = c.dist
     xv = vec(x)
-    @inbounds for i in eachindex(xv)
-        index = pback_step!(y, index, ScalarTransport(_elem_base(d, i), c.space), xv[i])
+    index0 = promote_index(index)
+    @trace track_numbers=false for i in eachindex(xv)
+        index0 = pback_step!(y, index0, ScalarTransport(_elem_base(d, i), c.space), xv[i])
     end
-    return index
+    return index0
 end

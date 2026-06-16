@@ -575,6 +575,27 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
         end
     end
 
+    @testset "gamma sampler: finite for practical shapes, matches reference at extreme α" begin
+        rng = MersenneTwister(2024)
+        # For any practical shape the draws are finite and positive.
+        for α in (0.1, 0.5, 1.0, 3.0)
+            xs = [rand(rng, StdInverseGamma(α, ())) for _ in 1:5000]
+            @test all(isfinite, xs)
+            @test all(>(0), xs)
+        end
+        for ν in (0.5, 1.0, 5.0)
+            @test all(isfinite, [rand(rng, StdTDist(ν, ())) for _ in 1:5000])
+        end
+        # At pathologically small shape some mass is genuinely above floatmax (Inf is correct,
+        # not a sampler bug): our Inf rate must match `Distributions`' own InverseGamma sampler.
+        for α in (0.001, 0.01)
+            n = 20000
+            ours = mean(!isfinite, [rand(rng, StdInverseGamma(α, ())) for _ in 1:n])
+            ref = mean(!isfinite, rand(rng, InverseGamma(α, 1.0), n))
+            @test ours ≈ ref atol = 0.03
+        end
+    end
+
     @testset "Truncated (Reactant-friendly), matches Distributions.truncated" begin
         rng = MersenneTwister(13)
         cases = [

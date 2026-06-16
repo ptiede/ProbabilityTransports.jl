@@ -5,6 +5,15 @@
 # the original distribution `start` and to evaluate the pulled-back target
 # density `logpdf_pfwd`.
 
+"""
+    TransportedDistribution
+
+The result of [`transport_to`](@ref). It *behaves like the latent reference space* for the
+`Distributions` interface (so it can be sampled and scored there) while carrying the transport
+node tree that pushes a latent draw to the original distribution via [`latent_pfwd`](@ref) and
+evaluates the pulled-back target density via [`logpdf_pfwd`](@ref). Construct it with
+`transport_to(distribution, space)` rather than directly.
+"""
 struct TransportedDistribution{T, S, E} <: Dists.ContinuousMultivariateDistribution
     transport::T   # AbstractTransport node tree
     start::S       # original (target) distribution

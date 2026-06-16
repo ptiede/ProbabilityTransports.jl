@@ -1,3 +1,11 @@
+"""
+    StdTDist(ν, [dims])
+
+Standard (zero-location, unit-scale) Student-t with `ν` degrees of freedom. `ν` may be a scalar
+(broadcast over `dims`) or an array matching the distribution's shape. A transportable base
+distribution, **not** a valid target space for [`transport_to`](@ref) (no `space_*` trait).
+The normalization is cached at construction since it costs a `loggamma` per element.
+"""
 struct StdTDist{T, Tν, N, Tl} <: AbstractStdDist{T, N}
     ν::Tν
     lognorm::Tl

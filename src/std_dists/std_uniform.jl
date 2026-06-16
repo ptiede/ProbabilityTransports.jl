@@ -1,3 +1,10 @@
+"""
+    StdUniform([T=Float64], dims...)
+
+Standard uniform on the unit hypercube `[0,1]^dims` (a scalar `Uniform(0,1)` when `dims` is
+empty). Both a transportable base distribution **and** a valid target space for
+[`transport_to`](@ref); targeting it gives a flat latent density (e.g. for nested sampling).
+"""
 struct StdUniform{T, N} <: AbstractStdDist{T, N}
     dims::Dims{N}
 end

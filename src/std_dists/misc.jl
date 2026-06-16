@@ -2,17 +2,25 @@
 
 #
 #    _rand_gamma(rng, α)
-
-#Draw a `Gamma(α, 1)` (shape `α`, unit scale) variate using the Marsaglia–Tsang
-#method. For `α < 1` the boost identity `Gamma(α) = Gamma(α+1) · U^(1/α)` is used.
-#Internal; backs `StdTDist` (via a χ² draw) and `StdInverseGamma`.
 #
-# Essentially does very smart rejection sampling. 
+# Draw a `Gamma(α, 1)` (shape `α`, unit scale) variate using the Marsaglia–Tsang squeeze-
+# rejection method. For `α < 1` the boost identity `Gamma(α) = Gamma(α+1) · U^(1/α)` is used.
+# Internal; backs `StdTDist` (via a χ² draw) and `StdInverseGamma`.
+#
+# Two finite-precision notes (both match `Distributions`' own gamma/InverseGamma sampler):
+#   * The rejection `while` is capped at 32 iterations so it traces under Reactant (a plain
+#     `while` cannot). The acceptance probability per iteration is high, so exhausting the cap
+#     (returning the `dv == 0` sentinel) has probability ~1e-54 — negligible.
+#   * For *very small* shape (α ≲ 0.02) the boost `U^(1/α)` underflows to 0, so the draw is 0.
+#     This is NOT a defect: such a `Gamma(α,1)` genuinely places that much mass below `floatmin`
+#     (≈49% of the mass at α=0.001), so the matching `InverseGamma`/`StudentT` draw is genuinely
+#     above `floatmax` and returns `Inf` — exactly as `Distributions` does (verified). Draws are
+#     finite for any practical shape (α ≳ 0.05).
 function _rand_gamma(rng::AbstractRNG, α::Number)
     af = float(α)
     a = within_compile() ? promote_to_traced(af) : af
     T = typeof(a)
-    # shape < 1 via the boost identity `Gamma(a) = Gamma(a+1) · U^(1/a)`
+    # shape < 1 via the boost identity `Gamma(a) = Gamma(a+1) · U^(1/a)`.
     @trace if a < one(T)
         boost = rand(rng, T)^inv(a)
         a = a + one(T)

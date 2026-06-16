@@ -1,3 +1,10 @@
+"""
+    StdExponential([T=Float64], dims...)
+
+Standard exponential (unit rate) of shape `dims`, supported on `z ≥ 0`. A transportable base
+distribution, **not** a valid target space for [`transport_to`](@ref) (it lacks the `space_*`
+trait, so targeting it errors at build time).
+"""
 struct StdExponential{T, N} <: AbstractStdDist{T, N}
     dims::Dims{N}
 end

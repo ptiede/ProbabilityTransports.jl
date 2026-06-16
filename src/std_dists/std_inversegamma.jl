@@ -1,8 +1,11 @@
-# StdInverseGamma — inverse-gamma with shape `α` and scale 1.
-# pdf(z; α) = z^(-α-1) exp(-1/z) / Γ(α) for z > 0.
-# `α` may be a scalar (broadcast across the support) or an array of the same
-# shape as the distribution.
+"""
+    StdInverseGamma(α, [dims])
 
+Inverse-gamma with shape `α` and unit scale: `pdf(z; α) = z^(-α-1) exp(-1/z) / Γ(α)` for
+`z > 0`. `α` may be a scalar (broadcast over `dims`) or an array matching the distribution's
+shape. A transportable base distribution, **not** a valid target space for
+[`transport_to`](@ref) (no `space_*` trait). The normalization is cached at construction.
+"""
 struct StdInverseGamma{T, Tα, N, Tl} <: AbstractStdDist{T, N}
     α::Tα
     lognorm::Tl

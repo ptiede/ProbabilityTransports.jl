@@ -23,6 +23,15 @@
 # `const_logdet(f) == true` asserts `with_logabsdet_jacobian(inverse(f), x)`'s log-det
 # always equals `map_lognorm(f, base)`).
 
+"""
+    PushforwardDistribution(f, base)
+
+The distribution of `f(Z)` for `Z ~ base` and an invertible map `f` exposing
+`InverseFunctions.inverse` and `ChangesOfVariables.with_logabsdet_jacobian` (e.g. `ScaleShift`,
+`AffineTransform`). The density is the change of variables of `base` through `f`; the
+data-independent part of the inverse log-det is cached in `lognorm` at construction. For example
+`PushforwardDistribution(AffineTransform(μ, A), StdNormal(K))` is `MvNormal(μ, A*A')`.
+"""
 struct PushforwardDistribution{F, D <: Dists.Distribution, N, L} <:
        Dists.ContinuousDistribution{Dists.ArrayLikeVariate{N}}
     f::F

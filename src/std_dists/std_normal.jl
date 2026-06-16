@@ -1,8 +1,11 @@
-# StdNormal — standard zero-mean unit-variance normal of arbitrary shape. The
-# matching base for every Gaussian image prior: under `StdNormal` its transport is
-# the vectorized identity (no cdf/quantile), which is what keeps those priors fast
-# and Reactant-traceable.
+"""
+    StdNormal([T=Float64], dims...)
 
+Standard zero-mean unit-variance normal of shape `dims` (a scalar when `dims` is empty).
+Both a transportable base distribution **and** a valid target space for [`transport_to`](@ref):
+it is the matching base for every Gaussian image prior, where its transport is the vectorized
+identity (no `cdf`/`quantile`), keeping those priors fast and Reactant-traceable.
+"""
 struct StdNormal{T, N} <: AbstractStdDist{T, N}
     dims::Dims{N}
 end
@@ -13,7 +16,8 @@ StdNormal{T}(d::Dims{N}) where {T, N} = StdNormal{T, N}(d)
 StdNormal{T}(d::Int...) where {T} = StdNormal{T}(d)
 
 @with_real Dists.insupport(::StdNormal, ::Number) = true
-Dists.insupport(::StdNormal, x::AbstractArray) = true
+# Support is all of ℝ, but still validate the shape (matching the other `Std*`).
+Dists.insupport(d::StdNormal, x::AbstractArray) = size(d) == size(x)
 Base.minimum(::StdNormal{T, 0}) where {T} = T(-Inf)
 Base.maximum(::StdNormal{T, 0}) where {T} = T(Inf)
 
