@@ -77,7 +77,8 @@ end
 # Distributions' generic `insupport(::ContinuousUnivariateDistribution, ::Real)`.
 @with_real Dists.insupport(::StdInverseGamma, x::Number) = x > 0
 function Dists.insupport(d::StdInverseGamma, x::AbstractArray)
-    return size(d) == size(x) && all(>(0), x)
+    size(d) == size(x) || return false
+    return all(>(0), x)
 end
 Base.minimum(::StdInverseGamma{T, <:Any, 0}) where {T} = zero(T)
 Base.maximum(::StdInverseGamma{T, <:Any, 0}) where {T} = T(Inf)

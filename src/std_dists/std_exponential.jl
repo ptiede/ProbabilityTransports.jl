@@ -42,7 +42,8 @@ _std_rand!(rng::AbstractRNG, ::StdExponential, x::AbstractArray) = randexp!(rng,
 # Distributions' generic `insupport(::ContinuousUnivariateDistribution, ::Real)`.
 @with_real Dists.insupport(::StdExponential, x::Number) = x >= 0
 function Dists.insupport(d::StdExponential, x::AbstractArray)
-    return size(d) == size(x) && all(>=(0), x)
+    size(d) == size(x) || return false
+    return all(>=(0), x)
 end
 Base.minimum(::StdExponential{T, 0}) where {T} = zero(T)
 Base.maximum(::StdExponential{T, 0}) where {T} = T(Inf)

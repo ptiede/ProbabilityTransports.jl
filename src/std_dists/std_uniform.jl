@@ -41,9 +41,16 @@ _std_rand!(rng::AbstractRNG, ::StdUniform, x::AbstractArray) = rand!(rng, x)
 
 # `@with_real` also emits the `::Real` overload that breaks the ambiguity with
 # Distributions' generic `insupport(::ContinuousUnivariateDistribution, ::Real)`.
-@with_real Dists.insupport(::StdUniform, x::Number) = (0 <= x <= 1)
+# Branchless `&` (not the chained `0 <= x <= 1`, which lowers to a short-circuiting
+# boolean form): a `TracedRNumber{Bool}` cannot be used in a boolean context, so the
+# chained form fails to trace under Reactant. `&` keeps it data-flow only.
+@with_real Dists.insupport(::StdUniform, x::Number) = (zero(x) <= x) & (x <= one(x))
+# Static size guard first (a compile-time `Bool` under Reactant), then the branchless
+# elementwise mask. The `all(...)` reduction is itself a `TracedRNumber{Bool}` when traced,
+# so consume the result via `ifelse`/data-flow — not a boolean `if`/`&&`.
 function Dists.insupport(d::StdUniform, x::AbstractArray)
-    return size(d) == size(x) && all(xi -> 0 <= xi <= 1, x)
+    size(d) == size(x) || return false
+    return all(xi -> (zero(xi) <= xi) & (xi <= one(xi)), x)
 end
 Base.minimum(::StdUniform{T, 0}) where {T} = zero(T)
 Base.maximum(::StdUniform{T, 0}) where {T} = one(T)

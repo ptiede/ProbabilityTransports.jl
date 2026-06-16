@@ -136,6 +136,62 @@ _val(x) = Float64(Reactant.to_number(x))
         @test _val(flc(wr)) ≈ logpdf_pfwd(nc, w0) rtol = 1.0e-6
     end
 
+    @testset "index threading: pfwd_step/pback_step! advance correctly under @compile" begin
+        # The danger under `@trace`/tracing is a DROPPED index update: a node that consumes
+        # several latent coordinates must advance the shared index so a *later* node reads
+        # fresh coordinates. We put a multi-coordinate node BEFORE a distinct scalar leaf, so
+        # a dropped/duplicated index makes the trailing leaf read the wrong coordinate and the
+        # compiled result diverges from CPU. The pback!∘pfwd round-trip then exercises the same
+        # threading through `pback_step!`. (Only the Reactant-traceable nodes are used here:
+        # affine-Cholesky `MvNormal`, the matching-base array identity, and the composite
+        # recursion. The generic `Product`/cross-space array nodes are CPU-only — covered in
+        # runtests.jl — and intentionally not compiled.)
+        Σ3 = [2.0 0.3 0.1; 0.3 1.5 0.2; 0.1 0.2 1.0]
+        μ3 = [1.0, 2.0, 3.0]
+
+        # MvNormal (3 coords) THEN a scalar Normal that must consume coordinate 4.
+        A = transport_to((mv = Distributions.MvNormal(μ3, Σ3), n = Normal(50.0, 0.1)), StdNormal())
+        yA = randn(MersenneTwister(101), 4)
+        let yr = Reactant.to_rarray(yA), yb = Reactant.to_rarray(zeros(4))
+            fn = @compile (y -> latent_pfwd(A, y).n)(yr)
+            @test _val(fn(yr)) ≈ latent_pfwd(A, yA).n rtol = 1.0e-6        # trailing leaf = coord 4
+            frt = @compile ((y, b) -> latent_pback!(b, A, latent_pfwd(A, y)))(yr, yb)
+            @test Array(frt(yr, yb)) ≈ yA rtol = 1.0e-6                    # round-trip: pback! threading
+        end
+
+        # Matching-base image-prior array node (2x2 = 4 coords, the @view/reshape path) THEN a
+        # scalar Normal that must consume coordinate 5 — the hot image-prior layout.
+        img = PushforwardDistribution(
+            PT.ScaleShift(Float64.(reshape(1:4, 2, 2)), fill(0.5, 2, 2)), StdNormal(2, 2)
+        )
+        B = transport_to((img = img, n = Normal(99.0, 0.1)), StdNormal())
+        yB = randn(MersenneTwister(102), 5)
+        let yr = Reactant.to_rarray(yB), yb = Reactant.to_rarray(zeros(5))
+            fn = @compile (y -> latent_pfwd(B, y).n)(yr)
+            @test _val(fn(yr)) ≈ latent_pfwd(B, yB).n rtol = 1.0e-6        # trailing leaf = coord 5
+            frt = @compile ((y, b) -> latent_pback!(b, B, latent_pfwd(B, y)))(yr, yb)
+            @test Array(frt(yr, yb)) ≈ yB rtol = 1.0e-6
+        end
+    end
+
+    @testset "array-base logpdf / insupport are Reactant-safe" begin
+        # Guards the `Std*` array `logpdf` (the StdUniform/StdExponential kernels mask via
+        # `insupport` on the whole array through `ifelse`) and that `insupport` is consumed the
+        # Reactant-safe data-flow way. A regression to a boolean `if`/`&&` form would fail here.
+        bases = (StdNormal(4), StdUniform(4), StdExponential(4),
+            StdInverseGamma(3.0, (4,)), StdTDist(5.0, (4,)))
+        xs = (randn(MersenneTwister(1), 4), rand(MersenneTwister(2), 4),
+            abs.(randn(MersenneTwister(3), 4)) .+ 0.1, abs.(randn(MersenneTwister(4), 4)) .+ 0.5,
+            randn(MersenneTwister(5), 4))
+        for (d, x0) in zip(bases, xs)
+            xr = Reactant.to_rarray(x0)
+            fl = @compile (x -> logpdf(d, x))(xr)
+            @test _val(fl(xr)) ≈ logpdf(d, x0) rtol = 1.0e-5
+            fi = @compile (x -> ifelse(insupport(d, x), one(eltype(x)), -one(eltype(x))))(xr)
+            @test _val(fi(xr)) ≈ 1.0          # all x0 are in-support
+        end
+    end
+
     @testset "_rand_gamma is statistically correct under @compile" begin
         # Strong guard: with the seed as a runtime input the sampler must reproduce
         # the Gamma(α, 1) mean (= α), not merely return a finite value — catches a
