@@ -53,17 +53,19 @@ _elem_bases(d::StdTDist{T, <:Number}) where {T} = Ref(_elem_base(d, 1))
 _elem_bases(d::StdInverseGamma{T, <:AbstractArray}) where {T} = StdInverseGamma.(d.α, Ref(()))
 _elem_bases(d::StdTDist{T, <:AbstractArray}) where {T} = StdTDist.(d.ν, Ref(()))
 
+# `_clamp_unit` (defined in transport.jl) keeps the cdf strictly inside (0,1) so
+# `quantile` of an unbounded target stays finite — see the note there.
 function pfwd_step(c::ArrayTransport{<:_ArrayStd}, y, index)
     m = prod(c.dims)
     yv = @view y[index:(index + m - 1)]
-    u = space_cdf.(Ref(c.space), yv)              # F_S : latent → [0,1]
-    x = quantile.(_elem_bases(c.dist), u)         # Q_D : [0,1] → target value
+    u = _clamp_unit.(space_cdf.(Ref(c.space), yv))   # F_S : latent → (0,1)
+    x = quantile.(_elem_bases(c.dist), u)            # Q_D : (0,1) → target value
     return reshape(x, c.dims), index + m
 end
 
 function pback_step!(y, index, c::ArrayTransport{<:_ArrayStd}, x)
     m = prod(c.dims)
-    u = cdf.(_elem_bases(c.dist), vec(x))                                  # F_D : target → [0,1]
-    @views y[index:(index + m - 1)] .= space_quantile.(Ref(c.space), u)    # Q_S : [0,1] → latent
+    u = _clamp_unit.(cdf.(_elem_bases(c.dist), vec(x)))                    # F_D : target → (0,1)
+    @views y[index:(index + m - 1)] .= space_quantile.(Ref(c.space), u)    # Q_S : (0,1) → latent
     return index + m
 end

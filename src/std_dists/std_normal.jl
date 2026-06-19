@@ -53,7 +53,29 @@ Dists.cov(d::StdNormal) = I(length(d))
 
 # cdf / quantile
 
-@inline _std_cdf(::StdNormal, x) = (one(x) + erf(x / sqrt(oftype(x, 2)))) / 2
+# Branchless elementary `erf` (Abramowitz & Stegun 7.1.26, |error| < 1.5e-7), built from only
+# +,-,*,/,exp,abs,copysign — so it lowers to `stablehlo`/`arith` constants rather than
+# `chlo.erf`. This sidesteps an Enzyme-JAX batching bug (EnzymeAD/Enzyme-JAX#2559): the reverse
+# rule of `chlo.erf` emits its coefficient `2/√π` as a `chlo.constant`; when the surrounding
+# function is then batched (e.g. an N-sample Monte-Carlo estimator), `EnzymeBatchPass` resizes
+# the constant's result type but not its `value` attribute, producing a malformed `chlo.constant`
+# that fails MLIR verification. An elementary erf keeps every constant in dialects whose batched
+# constants are repaired downstream, so it compiles cleanly. Remove once #2559 lands.
+@inline function _erf_poly(x)
+    o = one(x)
+    p = oftype(x, 0.3275911)
+    a1 = oftype(x, 0.254829592)
+    a2 = oftype(x, -0.284496736)
+    a3 = oftype(x, 1.421413741)
+    a4 = oftype(x, -1.453152027)
+    a5 = oftype(x, 1.061405429)
+    ax = abs(x)
+    t = o / (o + p * ax)
+    poly = ((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t
+    return copysign(o - poly * exp(-ax * ax), x)
+end
+
+@inline _std_cdf(::StdNormal, x) = (one(x) + _erf_poly(x / sqrt(oftype(x, 2)))) / 2
 @inline _std_quantile(::StdNormal, p) = sqrt(oftype(p, 2)) * erfinv(2 * p - one(p))
 
 Dists.cdf(d::StdNormal, x::Number) = _std_cdf(d, x)

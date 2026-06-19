@@ -183,15 +183,25 @@ function transport_node(d::Dists.UnivariateDistribution, space)
     return ScalarTransport(d, space)
 end
 
+# Clamp a cdf value strictly inside (0,1). For unbounded target distributions
+# (e.g. (VLBI)Exponential, InverseGamma, TDist) the space cdf `F_S(ξ)` saturates
+# to exactly `1.0` (or `0.0`) in floating point once `|ξ|` is large (Φ(ξ)=1.0 for
+# ξ≳8.3), and `quantile(dist, 1.0) = Inf`. A single Inf parameter then poisons the
+# whole downstream model (e.g. Inf σ → Inf GP field → softmax NaN → NaN image →
+# centroid NaN → an `Int(NaN)` crash). Clamping `u` to `[nextfloat(0), prevfloat(1)]`
+# keeps the quantile finite while preserving the monotone saturating behaviour: a
+# very large latent maps to a very large *but finite* parameter.
+@inline _clamp_unit(u::T) where {T} = clamp(u, nextfloat(zero(T)), prevfloat(one(T)))
+
 function pfwd_step(c::ScalarTransport, y, index)
     yi = _rgetindex(y, index)
-    u = space_cdf(c.space, yi)
+    u = _clamp_unit(space_cdf(c.space, yi))
     x = quantile(c.dist, u)
     return x, index + 1
 end
 
 function pback_step!(y, index, c::ScalarTransport, x::Number)
-    u = cdf(c.dist, x)
+    u = _clamp_unit(cdf(c.dist, x))
     _rsetindex!(y, space_quantile(c.space, u), index)
     return index + 1
 end
