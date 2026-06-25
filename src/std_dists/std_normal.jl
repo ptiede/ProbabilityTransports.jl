@@ -75,7 +75,9 @@ Dists.cov(d::StdNormal) = I(length(d))
     return copysign(o - poly * exp(-ax * ax), x)
 end
 
-@inline _std_cdf(::StdNormal, x) = (one(x) + _erf_poly(x / sqrt(oftype(x, 2)))) / 2
+# TODO: simplify when EnzymeAD/Enzyme-JAX#2559 is merged and a new version is tagged and released
+@inline _erf_std(x) = within_compile() ? _erf_poly(x) : erf(x)
+@inline _std_cdf(::StdNormal, x) = (one(x) + _erf_std(x / sqrt(oftype(x, 2)))) / 2
 @inline _std_quantile(::StdNormal, p) = sqrt(oftype(p, 2)) * erfinv(2 * p - one(p))
 
 Dists.cdf(d::StdNormal, x::Number) = _std_cdf(d, x)
