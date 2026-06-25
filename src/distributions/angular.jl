@@ -165,11 +165,11 @@ function _no_circular_transport(d, space)
     throw(
         ArgumentError(
             "Cannot transport the circular distribution `$(nameof(typeof(d)))` to " *
-            "`$(nameof(typeof(space)))`: there is no measure-preserving map from a " *
-            "circle to the line, so the transported variables would not be " *
-            "$(nameof(typeof(space)))-distributed. Use `TVFlat()` (a smooth ℝⁿ " *
-            "embedding via `AngleTransform`), or replace the prior with a projected-" *
-            "normal prior, whose transport to `StdNormal()` is exact.",
+                "`$(nameof(typeof(space)))`: there is no measure-preserving map from a " *
+                "circle to the line, so the transported variables would not be " *
+                "$(nameof(typeof(space)))-distributed. Use `TVFlat()` (a smooth ℝⁿ " *
+                "embedding via `AngleTransform`), or replace the prior with a projected-" *
+                "normal prior, whose transport to `StdNormal()` is exact.",
         ),
     )
 end

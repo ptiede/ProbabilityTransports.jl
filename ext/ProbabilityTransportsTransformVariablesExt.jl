@@ -91,9 +91,9 @@ function PT.transport_node(d::Dists.Product, ::PT.TVFlat)
     all(c -> Dists.support(c) == s1, d.v) || throw(
         ArgumentError(
             "Cannot transport this `Product` to `TVFlat()`: its components have " *
-            "different supports, but the flat transform applies one constraint to " *
-            "every coordinate. Use a `Tuple`/`TupleDist` of the component " *
-            "distributions instead, which transforms each component separately.",
+                "different supports, but the flat transform applies one constraint to " *
+                "every coordinate. Use a `Tuple`/`TupleDist` of the component " *
+                "distributions instead, which transforms each component separately.",
         ),
     )
     return as(Vector, _interval(first(d.v)), length(d.v))

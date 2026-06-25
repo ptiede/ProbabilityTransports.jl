@@ -175,9 +175,9 @@ function transport_node(d::Dists.UnivariateDistribution, space)
     static_hasmethod(quantile, Tuple{typeof(d), Float64}) || throw(
         ArgumentError(
             "Cannot transport `$(nameof(typeof(d)))` to `$(nameof(typeof(space)))`: it has " *
-            "no `quantile` method, so there is no exact transport of its variables to " *
-            "`$(nameof(typeof(space)))`. Provide `quantile`/`cdf`, add a `transport_node` " *
-            "specialization, or use `TVFlat()`.",
+                "no `quantile` method, so there is no exact transport of its variables to " *
+                "`$(nameof(typeof(space)))`. Provide `quantile`/`cdf`, add a `transport_node` " *
+                "specialization, or use `TVFlat()`.",
         ),
     )
     return ScalarTransport(d, space)
@@ -227,9 +227,9 @@ function transport_node(d::Union{Dists.MultivariateDistribution, Dists.MatrixDis
     static_hasmethod(pfwd_step, Tuple{typeof(c), Vector{Float64}, Int}) || throw(
         ArgumentError(
             "Cannot transport `$(nameof(typeof(d)))` to `$(nameof(typeof(space)))`: there " *
-            "is no exact array transport for it. Add a `transport_node` (or " *
-            "`pfwd_step`) specialization, reparameterize via " *
-            "`PushforwardDistribution`, or use `TVFlat()`.",
+                "is no exact array transport for it. Add a `transport_node` (or " *
+                "`pfwd_step`) specialization, reparameterize via " *
+                "`PushforwardDistribution`, or use `TVFlat()`.",
         ),
     )
     return c

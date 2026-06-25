@@ -44,4 +44,3 @@ end
 @with_real function Dists._rand!(rng::AbstractRNG, d::AbstractStdDist{T, N}, x::AbstractArray{<:Number, N}) where {T, N}
     return _std_rand!(rng, d, x)
 end
-

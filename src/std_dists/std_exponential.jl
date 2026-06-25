@@ -31,13 +31,13 @@ end
 @inline lognorm(d::StdExponential) = zero(eltype(d))
 
 
-# ----- sampling 
+# ----- sampling
 
 Random.rand(rng::AbstractRNG, ::StdExponential{T, 0}) where {T} = randexp(rng, T)
 _std_rand!(rng::AbstractRNG, ::StdExponential, x::AbstractArray) = randexp!(rng, x)
 
 
-# ----- support / moments 
+# ----- support / moments
 # `@with_real` also emits the `::Real` overload that breaks the ambiguity with
 # Distributions' generic `insupport(::ContinuousUnivariateDistribution, ::Real)`.
 @with_real Dists.insupport(::StdExponential, x::Number) = x >= 0

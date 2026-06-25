@@ -60,8 +60,12 @@ _val(x) = Float64(Reactant.to_number(x))
         draw_e(z) = rand(Random.default_rng(), StdExponential()) + sum(z) * 0.0
         draw_u(z) = rand(Random.default_rng(), StdUniform()) + sum(z) * 0.0
         @test isfinite(_val((@compile draw_n(dummy))(dummy)))
-        let e = _val((@compile draw_e(dummy))(dummy)); @test isfinite(e) && e ≥ 0 end
-        let u = _val((@compile draw_u(dummy))(dummy)); @test 0 ≤ u ≤ 1 end
+        let e = _val((@compile draw_e(dummy))(dummy))
+            @test isfinite(e) && e ≥ 0
+        end
+        let u = _val((@compile draw_u(dummy))(dummy))
+            @test 0 ≤ u ≤ 1
+        end
     end
 
     @testset "non-rejection array samplers trace under @compile" begin
@@ -74,7 +78,9 @@ _val(x) = Float64(Reactant.to_number(x))
         arr_u(x) = rand!(Random.default_rng(), StdUniform(4), x)
         @test all(isfinite, Array((@compile arr_n(a))(a)))
         @test all(≥(0), Array((@compile arr_e(a))(a)))
-        let u = Array((@compile arr_u(a))(a)); @test all(0 .≤ u .≤ 1) end
+        let u = Array((@compile arr_u(a))(a))
+            @test all(0 .≤ u .≤ 1)
+        end
     end
 
     @testset "gamma rejection samplers (StdTDist/StdInverseGamma) trace" begin
@@ -178,11 +184,15 @@ _val(x) = Float64(Reactant.to_number(x))
         # Guards the `Std*` array `logpdf` (the StdUniform/StdExponential kernels mask via
         # `insupport` on the whole array through `ifelse`) and that `insupport` is consumed the
         # Reactant-safe data-flow way. A regression to a boolean `if`/`&&` form would fail here.
-        bases = (StdNormal(4), StdUniform(4), StdExponential(4),
-            StdInverseGamma(3.0, (4,)), StdTDist(5.0, (4,)))
-        xs = (randn(MersenneTwister(1), 4), rand(MersenneTwister(2), 4),
+        bases = (
+            StdNormal(4), StdUniform(4), StdExponential(4),
+            StdInverseGamma(3.0, (4,)), StdTDist(5.0, (4,)),
+        )
+        xs = (
+            randn(MersenneTwister(1), 4), rand(MersenneTwister(2), 4),
             abs.(randn(MersenneTwister(3), 4)) .+ 0.1, abs.(randn(MersenneTwister(4), 4)) .+ 0.5,
-            randn(MersenneTwister(5), 4))
+            randn(MersenneTwister(5), 4),
+        )
         for (d, x0) in zip(bases, xs)
             xr = Reactant.to_rarray(x0)
             fl = @compile (x -> logpdf(d, x))(xr)

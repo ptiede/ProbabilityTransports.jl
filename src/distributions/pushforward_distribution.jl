@@ -33,7 +33,7 @@ data-independent part of the inverse log-det is cached in `lognorm` at construct
 `PushforwardDistribution(AffineTransform(μ, A), StdNormal(K))` is `MvNormal(μ, A*A')`.
 """
 struct PushforwardDistribution{F, D <: Dists.Distribution, N, L} <:
-       Dists.ContinuousDistribution{Dists.ArrayLikeVariate{N}}
+    Dists.ContinuousDistribution{Dists.ArrayLikeVariate{N}}
     f::F
     base::D
     lognorm::L

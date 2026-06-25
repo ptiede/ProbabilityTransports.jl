@@ -44,9 +44,9 @@ function basemeasure(space::AbstractStdDist, n::Int)
     throw(
         ArgumentError(
             "`$(nameof(typeof(space)))` is a transportable base distribution, not a " *
-            "target space: `transport_to` supports `StdNormal()`, `StdUniform()`, and " *
-            "`TVFlat()` targets. To add a new target space define the `space_cdf`/" *
-            "`space_quantile`/`space_logpdf` trait and a `basemeasure` method for it.",
+                "target space: `transport_to` supports `StdNormal()`, `StdUniform()`, and " *
+                "`TVFlat()` targets. To add a new target space define the `space_cdf`/" *
+                "`space_quantile`/`space_logpdf` trait and a `basemeasure` method for it.",
         ),
     )
 end

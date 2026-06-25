@@ -121,7 +121,7 @@ function Dists.var(d::StdTDist{T, <:AbstractArray, N}) where {T, N}
 end
 
 
-# ----- cdf / quantile 
+# ----- cdf / quantile
 
 @inline function _t_elem_cdf(ν, x)
     a = ν / 2

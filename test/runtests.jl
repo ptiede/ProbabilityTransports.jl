@@ -102,7 +102,7 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
             y = randn(rng, dimension(dto))
             # sampler targets the reference; exactness checked independently (FD)
             @test logpdf(dto, y) ≈ logpdf(StdNormal(dimension(dto)), y)
-            @test isapprox(fd_fwd(dto, D, y), logpdf_pfwd(dto, y); atol = 1e-5)
+            @test isapprox(fd_fwd(dto, D, y), logpdf_pfwd(dto, y); atol = 1.0e-5)
         end
     end
 
@@ -111,8 +111,8 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
         for D in (Gamma(2.0, 3.0), Beta(2.0, 2.0), product_distribution([Normal(), Gamma(2.0)]))
             dto = transport_to(D, StdUniform())
             u = rand(rng, dimension(dto))
-            @test isapprox(logpdf_pfwd(dto, u), 0.0; atol = 1e-10)
-            @test isapprox(fd_fwd(dto, D, u), logpdf_pfwd(dto, u); atol = 1e-5)   # exactness
+            @test isapprox(logpdf_pfwd(dto, u), 0.0; atol = 1.0e-10)
+            @test isapprox(fd_fwd(dto, D, u), logpdf_pfwd(dto, u); atol = 1.0e-5)   # exactness
         end
     end
 
@@ -180,7 +180,7 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
         dto = transport_to(nd, StdNormal())
         y = randn(rng, dimension(dto))
         @test logpdf(dto, y) ≈ logpdf(StdNormal(dimension(dto)), y)
-        @test isapprox(fd_fwd(dto, nd, y), logpdf_pfwd(dto, y); atol = 1e-5)
+        @test isapprox(fd_fwd(dto, nd, y), logpdf_pfwd(dto, y); atol = 1.0e-5)
     end
 
     @testset "Affine / LocationScale pushforward" begin
@@ -191,7 +191,7 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
         base = transport_to(Gamma(2.5, 1.3), StdNormal())
         y = randn(rng, 1)
         @test latent_pfwd(dto, y) ≈ 1.0 + 2.0 * latent_pfwd(base, y)
-        @test isapprox(fd_fwd(dto, D, y), logpdf_pfwd(dto, y); atol = 1e-5)
+        @test isapprox(fd_fwd(dto, D, y), logpdf_pfwd(dto, y); atol = 1.0e-5)
         @test latent_pback(dto, latent_pfwd(dto, y)) ≈ y
     end
 
@@ -201,13 +201,13 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
         dn = transport_to(Dn, StdNormal())
         y = randn(rng, 1)
         @test latent_pfwd(dn, y) ≈ 3.0 + 2.0 * y[1]
-        @test isapprox(fd_fwd(dn, Dn, y), logpdf_pfwd(dn, y); atol = 1e-5)
+        @test isapprox(fd_fwd(dn, Dn, y), logpdf_pfwd(dn, y); atol = 1.0e-5)
         Du = Uniform(2.0, 5.0)
         du = transport_to(Du, StdUniform())
         u = rand(rng, 1)
         @test latent_pfwd(du, u) ≈ 2.0 + 3.0 * u[1]
-        @test isapprox(logpdf_pfwd(du, u), 0.0; atol = 1e-12)
-        @test isapprox(fd_fwd(du, Du, u), logpdf_pfwd(du, u); atol = 1e-5)
+        @test isapprox(logpdf_pfwd(du, u), 0.0; atol = 1.0e-12)
+        @test isapprox(fd_fwd(du, Du, u), logpdf_pfwd(du, u); atol = 1.0e-5)
     end
 
     @testset "MvNormal (affine / Cholesky) and DiagNormal" begin
@@ -219,19 +219,19 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
         @test dimension(dto) == 2
         y = randn(rng, 2)
         @test latent_pfwd(dto, y) ≈ μ .+ cholesky(Σ).L * y
-        @test isapprox(fd_fwd(dto, D, y), logpdf_pfwd(dto, y); atol = 1e-5)   # logdet(L) term
+        @test isapprox(fd_fwd(dto, D, y), logpdf_pfwd(dto, y); atol = 1.0e-5)   # logdet(L) term
         @test latent_pback(dto, latent_pfwd(dto, y)) ≈ y
         # generic space path
         dtoU = transport_to(D, StdUniform())
         u = rand(rng, 2)
-        @test isapprox(logpdf_pfwd(dtoU, u), 0.0; atol = 1e-8)
-        @test isapprox(fd_fwd(dtoU, D, u), logpdf_pfwd(dtoU, u); atol = 1e-5)
+        @test isapprox(logpdf_pfwd(dtoU, u), 0.0; atol = 1.0e-8)
+        @test isapprox(fd_fwd(dtoU, D, u), logpdf_pfwd(dtoU, u); atol = 1.0e-5)
         @test latent_pback(dtoU, latent_pfwd(dtoU, u)) ≈ u
         # diagonal
         Dd = MvNormal([0.5, 1.0, -2.0], Diagonal([1.0, 4.0, 0.25]))
         dd = transport_to(Dd, StdNormal())
         yd = randn(rng, 3)
-        @test isapprox(fd_fwd(dd, Dd, yd), logpdf_pfwd(dd, yd); atol = 1e-5)
+        @test isapprox(fd_fwd(dd, Dd, yd), logpdf_pfwd(dd, yd); atol = 1.0e-5)
         @test latent_pback(dd, latent_pfwd(dd, yd)) ≈ yd
     end
 
@@ -245,16 +245,16 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
             y = randn(rng, K - 1)
             x = latent_pfwd(dn, y)
             @test sum(x) ≈ 1.0
-            @test all(x .>= -1e-12)
+            @test all(x .>= -1.0e-12)
             @test latent_pback(dn, x) ≈ y
-            @test isapprox(fd_fwd(dn, D, y), logpdf_pfwd(dn, y); atol = 1e-5)   # dim-reducing
+            @test isapprox(fd_fwd(dn, D, y), logpdf_pfwd(dn, y); atol = 1.0e-5)   # dim-reducing
             du = transport_to(D, StdUniform())
             u = rand(rng, K - 1)
             xu = latent_pfwd(du, u)
             @test sum(xu) ≈ 1.0
             @test latent_pback(du, xu) ≈ u
-            @test isapprox(logpdf_pfwd(du, u), 0.0; atol = 1e-8)
-            @test isapprox(fd_fwd(du, D, u), logpdf_pfwd(du, u); atol = 1e-5)
+            @test isapprox(logpdf_pfwd(du, u), 0.0; atol = 1.0e-8)
+            @test isapprox(fd_fwd(du, D, u), logpdf_pfwd(du, u); atol = 1.0e-5)
         end
     end
 
@@ -281,7 +281,7 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
                 y = S === TVFlat() ? randn(rng, 2) : rand(rng, dto)
                 x = latent_pfwd(dto, y)
                 if S !== TVFlat()
-                    @test isapprox(fd_fwd(dto, d, y), logpdf_pfwd(dto, y); atol = 1e-5)   # EXACT
+                    @test isapprox(fd_fwd(dto, d, y), logpdf_pfwd(dto, y); atol = 1.0e-5)   # EXACT
                 end
                 @test latent_pback(dto, x) ≈ y
             end
@@ -314,7 +314,7 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
             y = S === TVFlat() ? randn(rng, length(d)) : rand(rng, dto)
             x = latent_pfwd(dto, y)
             if S !== TVFlat()
-                @test isapprox(fd_fwd(dto, d, y), logpdf_pfwd(dto, y); atol = 1e-5)   # EXACT
+                @test isapprox(fd_fwd(dto, d, y), logpdf_pfwd(dto, y); atol = 1.0e-5)   # EXACT
             end
             @test latent_pback(dto, x) ≈ y
         end
@@ -354,15 +354,17 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
             d = AngularProjectedNormal(μ, γ)
             u = (cos(θ), sin(θ));  ν = (γ * cos(μ), γ * sin(μ))
             rs = range(0, 30; length = 300_000); dr = step(rs)
-            fnum = sum(r -> (1 / (2π)) * r *
-                            exp(-((r * u[1] - ν[1])^2 + (r * u[2] - ν[2])^2) / 2), rs) * dr
-            @test exp(logpdf(d, [θ])) ≈ fnum rtol = 1e-2
+            fnum = sum(
+                r -> (1 / (2π)) * r *
+                    exp(-((r * u[1] - ν[1])^2 + (r * u[2] - ν[2])^2) / 2), rs
+            ) * dr
+            @test exp(logpdf(d, [θ])) ≈ fnum rtol = 1.0e-2
         end
 
         # density normalizes over the circle (periodic Riemann sum is spectrally accurate)
         let d = AngularProjectedNormal(0.4, 1.7)
             θs = range(-π, π; length = 20_000); dθ = step(θs)
-            @test sum(θ -> exp(logpdf(d, [θ])), θs) * dθ ≈ 1.0 atol = 1e-3
+            @test sum(θ -> exp(logpdf(d, [θ])), θs) * dθ ≈ 1.0 atol = 1.0e-3
         end
 
         # concentrates around μ as γ grows (von-Mises-like)
@@ -402,7 +404,7 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
             y = randn(rng)
             x_pt = latent_pfwd(dto, [y])
             @test logpdf(dto, [y]) ≈ logpdf_pfwd(dto, [y])               # flat coincidence
-            @test isapprox(fd_fwd(dto, D, [y]), logpdf_pfwd(dto, [y]); atol = 1e-5)  # exact density
+            @test isapprox(fd_fwd(dto, D, [y]), logpdf_pfwd(dto, [y]); atol = 1.0e-5)  # exact density
             @test latent_pback(dto, x_pt) ≈ [y]
         end
         # multivariate: matches asflat shape; round-trips
@@ -411,7 +413,7 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
             y = randn(rng, dimension(dto))
             x = latent_pfwd(dto, y)
             @test logpdf(dto, y) ≈ logpdf_pfwd(dto, y)
-            @test isapprox(fd_fwd(dto, D, y), logpdf_pfwd(dto, y); atol = 1e-5)
+            @test isapprox(fd_fwd(dto, D, y), logpdf_pfwd(dto, y); atol = 1.0e-5)
             @test latent_pback(dto, x) ≈ y
         end
         # nested NamedDist with a Dirichlet leaf
@@ -435,7 +437,7 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
         y = randn(MersenneTwister(20), dimension(dto))
         x = latent_pfwd(dto, y)
         @test all(>(0), x)
-        @test isapprox(fd_fwd(dto, Phom, y), logpdf_pfwd(dto, y); atol = 1e-5)
+        @test isapprox(fd_fwd(dto, Phom, y), logpdf_pfwd(dto, y); atol = 1.0e-5)
         @test latent_pback(dto, x) ≈ y
     end
 
@@ -474,7 +476,7 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
         @test vec(sum(xs; dims = 2)) ./ 20_000 ≈ μ atol = 0.05
         dto = transport_to(da, StdNormal())
         y = rand(rng, dto)
-        @test isapprox(fd_fwd(dto, da, y), logpdf_pfwd(dto, y); atol = 1e-5)
+        @test isapprox(fd_fwd(dto, da, y), logpdf_pfwd(dto, y); atol = 1.0e-5)
         @test latent_pback(dto, latent_pfwd(dto, y)) ≈ y
     end
 
@@ -494,12 +496,12 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
         dto = transport_to(dln, StdNormal())
         y = randn(rng, 3)
         @test latent_pfwd(dto, y) ≈ exp.(y)
-        @test isapprox(fd_fwd(dto, dln, y), logpdf_pfwd(dto, y); atol = 1e-5)
+        @test isapprox(fd_fwd(dto, dln, y), logpdf_pfwd(dto, y); atol = 1.0e-5)
         @test latent_pback(dto, latent_pfwd(dto, y)) ≈ y
         # flat path: TV threads the data-dependent Jacobian per call
         dtf = transport_to(dln, TVFlat())
         yf = randn(rng, 3)
-        @test isapprox(fd_fwd(dtf, dln, yf), logpdf_pfwd(dtf, yf); atol = 1e-5)
+        @test isapprox(fd_fwd(dtf, dln, yf), logpdf_pfwd(dtf, yf); atol = 1.0e-5)
         @test latent_pback(dtf, latent_pfwd(dtf, yf)) ≈ yf
     end
 
@@ -540,13 +542,15 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
             @test logpdf(d, 1.3) ≈ logpdf(refd, 1.3)
         end
         # transport over all three spaces; check internal consistency
-        for d in (1.0 + 2.0 * StdNormal(), 2.0 + 3.0 * StdUniform(), 2.0 * StdExponential(),
-                  1.0 + 2.0 * StdTDist(5.0), 3.0 * StdInverseGamma(2.5))
+        for d in (
+                1.0 + 2.0 * StdNormal(), 2.0 + 3.0 * StdUniform(), 2.0 * StdExponential(),
+                1.0 + 2.0 * StdTDist(5.0), 3.0 * StdInverseGamma(2.5),
+            )
             for S in (StdNormal(), StdUniform(), TVFlat())
                 dto = transport_to(d, S)
                 y = S === TVFlat() ? randn(rng, dimension(dto)) : rand(rng, dto)
                 x = latent_pfwd(dto, y)
-                @test isapprox(fd_fwd(dto, d, y), logpdf_pfwd(dto, y); atol = 1e-5)
+                @test isapprox(fd_fwd(dto, d, y), logpdf_pfwd(dto, y); atol = 1.0e-5)
                 @test latent_pback(dto, x) ≈ y
             end
         end
@@ -570,7 +574,7 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
                 dto = transport_to(D, S)
                 n = dimension(dto)
                 y = rand(rng, dto)
-                @test isapprox(fd_fwd(dto, D, y), logpdf_pfwd(dto, y); atol = 1e-5)   # exactness
+                @test isapprox(fd_fwd(dto, D, y), logpdf_pfwd(dto, y); atol = 1.0e-5)   # exactness
                 @test latent_pback(dto, latent_pfwd(dto, y)) ≈ y
             end
         end
@@ -691,7 +695,7 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
             x = latent_pfwd(dto, y)
             xv = x isa AbstractArray ? x[1] : x
             @test -1.0 <= xv <= 2.0
-            @test isapprox(fd_fwd(dto, d, y), logpdf_pfwd(dto, y); atol = 1e-5)
+            @test isapprox(fd_fwd(dto, d, y), logpdf_pfwd(dto, y); atol = 1.0e-5)
             @test latent_pback(dto, x) ≈ y
         end
 
@@ -786,7 +790,7 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
             dto = transport_to(DeltaDist(5.0), S)
             @test dimension(dto) == 0
             @test latent_pfwd(dto, Float64[]) == 5.0
-            @test isapprox(logpdf_pfwd(dto, Float64[]), 0.0; atol = 1e-12)
+            @test isapprox(logpdf_pfwd(dto, Float64[]), 0.0; atol = 1.0e-12)
             @test length(latent_pback(dto, 5.0)) == 0
         end
         # inside a NamedDist: clamps that component, excluded from the latent dim

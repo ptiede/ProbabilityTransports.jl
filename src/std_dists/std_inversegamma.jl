@@ -21,7 +21,7 @@ struct StdInverseGamma{T, Tα, N, Tl} <: AbstractStdDist{T, N}
     end
 end
 
-# Compute the normalization 
+# Compute the normalization
 @inline _lognorm_igamma(d::Number, N) = -N * loggamma(d)
 @inline _lognorm_igamma(d::AbstractArray, N) = -sum(loggamma, d)
 
@@ -67,8 +67,6 @@ function _std_rand!(rng::AbstractRNG, d::StdInverseGamma{T}, x::AbstractArray) w
     end
     return x
 end
-
-
 
 
 # ----- support / moments --------------------------------------------------
