@@ -168,6 +168,22 @@ end
 
 dimension(::ScalarTransport{D, S}) where {D, S} = space_dimension(S)
 
+"""
+    is_scalar_transport(c) -> Bool
+
+Whether `c` natively speaks *scalar* latents — the analogue of TransformVariables'
+`ScalarTransform` kind. For scalar-kind transports the [`TransportedDistribution`](@ref)
+driver accepts a plain `Number` latent and [`latent_pback`](@ref) returns one (mirroring
+`TV.transform`/`TV.inverse`). The kind is **static** — a property of the node type, not a
+runtime `dimension(c) == 1` check — so a 1-dimensional vector-kind node (e.g. a
+length-1 `Product`, or `as(Vector, 1)` on the flat path) keeps vector semantics, exactly
+as in TransformVariables. New scalar node types opt in by adding a method.
+"""
+is_scalar_transport(::Any) = false
+# `ScalarTransport`'s target value is scalar; its latent is scalar iff the space is 1-dim
+# (`space_dimension` is keyed on the type, so this folds to a constant).
+is_scalar_transport(c::ScalarTransport) = dimension(c) == 1
+
 # The generic scalar path needs `quantile` (forward) and `cdf` (latent_pback) to build
 # the exact transport. Check at build time via a compile-time trait so a missing
 # method is a clear error rather than a deep stack trace.

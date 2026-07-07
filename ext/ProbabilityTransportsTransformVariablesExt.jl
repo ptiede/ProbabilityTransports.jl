@@ -20,6 +20,8 @@ using LinearAlgebra: norm
 # subtyping across packages), so we forward the value/latent_pback drivers here.
 
 PT.dimension(t::TV.AbstractTransform) = TV.dimension(t)
+# TV's scalar kind IS our scalar kind (vector-kind TV transforms keep the `false` fallback).
+PT.is_scalar_transport(::TV.ScalarTransform) = true
 
 # Value-only step: ask TV for `NoLogJac` (exactly what `TV.transform` does) so we don't
 # materialize the per-element log-Jacobian buffer that `LogJac` allocates.
@@ -63,6 +65,10 @@ function PT.latent_pfwd_and_logdensity(d::PT.TransportedDistribution{<:Any, <:An
     x, ℓ, _ = TV.transform_with(TV.LogJac(), getfield(d, :transport), y, firstindex(y))
     return x, Dists.logpdf(getfield(d, :start), x) + ℓ
 end
+# Disambiguate flat × scalar latent against the core `(::TransportedDistribution, ::Number)`
+# boxing method — same normalization, then the flat vector method above takes over.
+PT.latent_pfwd_and_logdensity(d::PT.TransportedDistribution{<:Any, <:Any, Nothing}, y::Number) =
+    PT.latent_pfwd_and_logdensity(d, PT._box_latent(d, y))
 
 # ----- per-distribution flat building blocks (the asflat dispatch table) -----
 #

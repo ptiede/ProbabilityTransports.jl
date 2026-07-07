@@ -62,19 +62,46 @@ Base.eltype(::Type{<:TransportedDistribution{T, S, E}}) where {T, S, E <: Abstra
 Base.eltype(::Type{<:TransportedDistribution{T, S, Nothing}}) where {T, S} = Float64
 dimension(d::TransportedDistribution) = dimension(getfield(d, :transport))
 
+# Scalar latents, mirroring TransformVariables: a transported distribution whose node is
+# *scalar-kind* (`is_scalar_transport` — TV's `ScalarTransform` analogue) speaks scalars
+# at every latent entry point (`latent_pfwd`, `latent_pfwd_and_logdensity`,
+# `logpdf_pfwd`, `logpdf`), and `latent_pback` hands a bare `Number` back. Scalars are
+# normalized here, once, at the user-facing driver — boxed to a 1-vector and sent down
+# the ordinary vector path — so the contract is uniform across entry points and across
+# the Std and flat spaces. The node protocol itself stays vector-only, and (as in TV) a
+# 1-dimensional *vector-kind* node keeps vector semantics.
+function _box_latent(d::TransportedDistribution, y::Number)
+    is_scalar_transport(getfield(d, :transport)) || throw(
+        ArgumentError(
+            "scalar latent passed to a vector-kind transport; pass an " *
+                "`AbstractVector` of length $(dimension(d))",
+        ),
+    )
+    return [y]
+end
+
 """
     latent_pfwd(dto::TransportedDistribution, y)
 
-Push the latent point `y` to the original distribution's space.
+Push the latent point `y` to the original distribution's space. For a scalar-kind
+transport (univariate target; see `is_scalar_transport`) `y` may be a plain `Number`.
 """
 latent_pfwd(d::TransportedDistribution, y) = latent_pfwd(d.transport, y)
+latent_pfwd(d::TransportedDistribution, y::Number) = latent_pfwd(d, _box_latent(d, y))
 
 """
     latent_pback(dto::TransportedDistribution, x)
 
 A latent point mapping to the original-space value `x` (a section; see [`latent_pback`](@ref)).
+For a scalar-kind transport this is a bare `Number` (mirroring `TransformVariables.inverse`
+on a `ScalarTransform`); otherwise an `AbstractVector`.
 """
-latent_pback(d::TransportedDistribution, x) = latent_pback(getfield(d, :transport), x)
+function latent_pback(d::TransportedDistribution, x)
+    c = getfield(d, :transport)
+    y = latent_pback(c, x)
+    # `is_scalar_transport` is a type constant, so this branch folds away
+    return is_scalar_transport(c) ? y[begin] : y
+end
 
 """
     latent_pback!(y, dto::TransportedDistribution, x)
@@ -93,6 +120,8 @@ latent_pback!(y, d::TransportedDistribution, x) = latent_pback!(y, getfield(d, :
 function latent_pfwd_and_logdensity(d::TransportedDistribution, y)
     return latent_pfwd(getfield(d, :transport), y), Dists.logpdf(d, y)
 end
+latent_pfwd_and_logdensity(d::TransportedDistribution, y::Number) =
+    latent_pfwd_and_logdensity(d, _box_latent(d, y))
 
 """
     logpdf_pfwd(dto, y)
@@ -100,6 +129,7 @@ end
 The pulled-back *target* density at latent `y` — the prior contribution a sampler
 targets. Equals `last(latent_pfwd_and_logdensity(dto, y))`: `logpdf(reference, y)` for the
 Std spaces (exact transport) and `logpdf(start, latent_pfwd(dto, y)) + logjac` for `TVFlat`.
+For a scalar-kind transport `y` may be a plain `Number`.
 """
 logpdf_pfwd(d::TransportedDistribution, y) = last(latent_pfwd_and_logdensity(d, y))
 
@@ -109,6 +139,8 @@ logpdf_pfwd(d::TransportedDistribution, y) = last(latent_pfwd_and_logdensity(d, 
 Dists.logpdf(d::TransportedDistribution, y::AbstractVector) = Dists.logpdf(getfield(d, :stop), y)
 # Flat space (stop === nothing): there is no separate reference, so logpdf == logpdf_pfwd.
 Dists.logpdf(d::TransportedDistribution{<:Any, <:Any, Nothing}, y::AbstractVector) = logpdf_pfwd(d, y)
+# Scalar latent: box and re-dispatch on the vector methods above.
+Dists.logpdf(d::TransportedDistribution, y::Number) = Dists.logpdf(d, _box_latent(d, y))
 
 function Dists._rand!(rng::AbstractRNG, d::TransportedDistribution, x::AbstractVector)
     rand!(rng, getfield(d, :stop), x)
