@@ -654,6 +654,21 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
                 @test PT._ig_elem_quantile(α, PT._ig_elem_cdf(α, z)) ≈ z
             end
         end
+
+        @testset "lognorm = false skips the cache but stays first-class" begin
+            # The uncached form (used by the per-element transport path) must be
+            # indistinguishable from the cached one: `lognorm` recomputes on demand.
+            for (dc, dl) in (
+                    (StdInverseGamma(2.5), StdInverseGamma(2.5; lognorm = false)),
+                    (StdTDist(5.0), StdTDist(5.0; lognorm = false)),
+                    (StdInverseGamma([2.5, 3.0]), StdInverseGamma([2.5, 3.0]; lognorm = false)),
+                )
+                @test isnothing(dl.lognorm)
+                @test PT.lognorm(dl) ≈ PT.lognorm(dc)
+                xv = isempty(size(dc)) ? 0.7 : fill(0.7, size(dc))
+                @test logpdf(dl, xv) ≈ logpdf(dc, xv)
+            end
+        end
     end
 
     @testset "scalar latents on scalar-kind transports (mirrors TV)" begin

@@ -4,35 +4,21 @@
 Inverse-gamma with shape `α` and unit scale: `pdf(z; α) = z^(-α-1) exp(-1/z) / Γ(α)` for
 `z > 0`. `α` may be a scalar (broadcast over `dims`) or an array matching the distribution's
 shape. A transportable base distribution, **not** a valid target space for
-[`transport_to`](@ref) (no `space_*` trait). The normalization is cached at construction.
+[`transport_to`](@ref) (no `space_*` trait). The normalization is cached at construction;
+pass `lognorm = false` to skip the cache (`lognorm(d)` then recomputes on demand).
 """
 struct StdInverseGamma{T, Tα, N, Tl} <: AbstractStdDist{T, N}
     α::Tα
     lognorm::Tl
     dims::Dims{N}
-    # Precompute the normalization because it is expensive. Store `α` as-is
-    # (`Tα = typeof(α)` — scalar or array); derive the float output eltype `T` from its
-    # element type so an integer `α` doesn't make `T = Int`.
-    function StdInverseGamma(α::Union{Number, AbstractArray}, dims::Dims{N}) where {N}
-        Tα = typeof(α)
-        T = float(eltype(α))
-        lognorm = _lognorm_igamma(α, prod(dims))
-        return new{T, Tα, N, typeof(lognorm)}(α, lognorm, dims)
-    end
-    # Lognorm-free construction (pass `nothing`): the per-element transport kernels
-    # (`_std_cdf`/`_std_quantile`) never read `lognorm`, so skip the `loggamma` per call.
-    function StdInverseGamma(α::Number, lognorm::Nothing, dims::Dims{N}) where {N}
-        return new{float(eltype(α)), typeof(α), N, Nothing}(α, lognorm, dims)
-    end
 end
 
 # Compute the normalization
 @inline _lognorm_igamma(d::Number, N) = -N * loggamma(d)
 @inline _lognorm_igamma(d::AbstractArray, N) = -sum(loggamma, d)
 
-StdInverseGamma(α::Number) = StdInverseGamma(α, ())
-StdInverseGamma(α::Number, dims::Int...) = StdInverseGamma(α, dims)
-StdInverseGamma(α::AbstractArray) = StdInverseGamma(α, size(α))
+# Constructors + cached/uncached `lognorm` + per-element `_elem_dist` (shared with StdTDist).
+@cached_scalar_std StdInverseGamma α _lognorm_igamma
 
 # ----- log-pdf split ------------------------------------------------------
 # `loggamma(α)` is the expensive piece for an array `α`; folding it into
@@ -55,8 +41,6 @@ function unnormed_logpdf(
     ) where {T, Tα, N}
     return _unnormed_kernel_sum(d, x)
 end
-
-@inline lognorm(d::StdInverseGamma) = d.lognorm
 
 # ----- sampling -----------------------------------------------------------
 

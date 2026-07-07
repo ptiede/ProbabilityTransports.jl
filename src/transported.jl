@@ -91,6 +91,21 @@ function _box_latent(d::TransportedDistribution, y::Number)
     return [y]
 end
 
+# Guard the latent length against the transport's dimension. `dimension(d)` is a
+# compile-time constant and `length(y)` is static under Reactant, so the check folds away
+# in a traced kernel (no data-dependent control flow). This turns a mis-shaped latent into
+# a clear error instead of a silently-wrong density — in particular a scalar-kind
+# (univariate) transport fed a multi-element vector, which would otherwise sum the
+# reference kernel over the extra entries rather than reject them.
+@inline function _check_latent_length(d::TransportedDistribution, y::AbstractVector)
+    length(y) == dimension(d) || throw(
+        DimensionMismatch(
+            "latent vector of length $(length(y)) for a transport of dimension $(dimension(d))",
+        ),
+    )
+    return nothing
+end
+
 """
     latent_pfwd(dto::TransportedDistribution, y)
 
@@ -150,8 +165,13 @@ logpdf_pfwd(d::TransportedDistribution, y) = last(latent_pfwd_and_logdensity(d, 
 # ----- Distributions interface: behave like the latent reference ----------
 
 # Std spaces: `logpdf(dto, y) == logpdf(stop, y)`.
-Dists.logpdf(d::TransportedDistribution, y::AbstractVector) = Dists.logpdf(getfield(d, :stop), y)
+function Dists.logpdf(d::TransportedDistribution, y::AbstractVector)
+    _check_latent_length(d, y)
+    return Dists.logpdf(getfield(d, :stop), y)
+end
 # Flat space (stop === nothing): there is no separate reference, so logpdf == logpdf_pfwd.
+# The length guard lives at the flat density primitive (`latent_pfwd_and_logdensity` in the
+# TV extension), which `logpdf_pfwd` funnels through, so it need not be repeated here.
 Dists.logpdf(d::TransportedDistribution{<:Any, <:Any, Nothing}, y::AbstractVector) = logpdf_pfwd(d, y)
 # Scalar latent: box and re-dispatch on the vector methods above. (`@with_real` emits the
 # `::Real` companion that keeps this ahead of the generic `Distributions` fallbacks.)

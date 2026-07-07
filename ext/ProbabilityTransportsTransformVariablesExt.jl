@@ -69,6 +69,11 @@ end
 # (which boxes scalars and re-dispatches here) — new spaces should type their vector
 # methods the same way.
 function PT.latent_pfwd_and_logdensity(d::PT.TransportedDistribution{<:Any, <:Any, Nothing}, y::AbstractVector)
+    # Guard the latent length here, at the flat space's sole density primitive: unlike the
+    # Std path, `TV.transform_with` consumes only `dimension` entries and silently ignores a
+    # too-long tail, so a direct `logpdf_pfwd` call would otherwise return a wrong density
+    # with no error. (The `logpdf` interface method checks too, but callers may target this.)
+    PT._check_latent_length(d, y)
     x, ℓ, _ = TV.transform_with(TV.LogJac(), getfield(d, :transport), y, firstindex(y))
     return x, Dists.logpdf(getfield(d, :start), x) + ℓ
 end

@@ -83,6 +83,9 @@ end
 Dists.cdf(d::StdNormal, x::Number) = _std_cdf(d, x)
 Dists.quantile(d::StdNormal, p::Number) = _std_quantile(d, p)
 
+# the array-transport element (see `_elem_dist` in interface.jl): parameter-free, ignores `i`
+_elem_dist(::StdNormal{T}, i; lognorm::Bool = false) where {T} = StdNormal{T}()
+
 # transport spaces
 space_cdf(d::StdNormal, y) = _std_cdf(d, y)        # Φ  (defined in StdDists/std_normal.jl)
 space_quantile(d::StdNormal, u) = _std_quantile(d, u)  # Φ⁻¹

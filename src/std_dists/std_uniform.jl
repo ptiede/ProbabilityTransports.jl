@@ -71,6 +71,9 @@ Dists.var(d::StdUniform) = fill(eltype(d)(1) / eltype(d)(12), size(d))
 Dists.cdf(d::StdUniform{T, 0}, x::Number) where {T} = _std_cdf(d, x)
 Dists.quantile(d::StdUniform{T, 0}, p::Number) where {T} = _std_quantile(d, p)
 
+# the array-transport element (see `_elem_dist` in interface.jl): parameter-free, ignores `i`
+_elem_dist(::StdUniform{T}, i; lognorm::Bool = false) where {T} = StdUniform{T}()
+
 # ----- transport interface
 space_cdf(::StdUniform, y) = clamp(y, zero(y), one(y))
 space_quantile(::StdUniform, u) = u

@@ -4,33 +4,14 @@
 Standard (zero-location, unit-scale) Student-t with `ν` degrees of freedom. `ν` may be a scalar
 (broadcast over `dims`) or an array matching the distribution's shape. A transportable base
 distribution, **not** a valid target space for [`transport_to`](@ref) (no `space_*` trait).
-The normalization is cached at construction since it costs a `loggamma` per element.
+The normalization is cached at construction since it costs a `loggamma` per element; pass
+`lognorm = false` to skip the cache (`lognorm(d)` then recomputes on demand).
 """
 struct StdTDist{T, Tν, N, Tl} <: AbstractStdDist{T, N}
     ν::Tν
     lognorm::Tl
     dims::Dims{N}
-    function StdTDist(ν::Union{Number, AbstractArray}, dims::Dims{N}) where {N}
-        Tν = typeof(ν)
-        T = float(eltype(ν))
-        lognorm = _lognorm_tdist(ν, prod(dims))
-        return new{T, Tν, N, typeof(lognorm)}(ν, lognorm, dims)
-    end
-    # Lognorm-free construction (pass `nothing`): the per-element transport kernels
-    # (`_std_cdf`/`_std_quantile`) never read `lognorm`, so skip the two `loggamma`s per call.
-    function StdTDist(ν::Number, lognorm::Nothing, dims::Dims{N}) where {N}
-        return new{float(eltype(ν)), typeof(ν), N, Nothing}(ν, lognorm, dims)
-    end
 end
-# Store `ν` as-is (`Tν = typeof(ν)` — scalar or array); derive the output eltype `T` as the
-# parameter *eltype* promoted to a float. This keeps an integer `ν` from making `T = Int`
-# (which would break the
-# `T(±Inf)`/`T(NaN)` moments) without copying float/traced parameter arrays.
-# `float(::Type)` resolves for traced eltypes inside a trace — the only place they
-# exist — and the per-element kernels coerce via the value-level `float(ν)`.
-StdTDist(ν::Number) = StdTDist(ν, ())
-StdTDist(ν::Number, dims::Int...) = StdTDist(ν, dims)
-StdTDist(ν::AbstractArray) = StdTDist(ν, size(ν))
 
 
 # ----- log-pdf split ------------------------------------------------------
@@ -48,6 +29,12 @@ end
 @inline function _lognorm_tdist(ν::AbstractArray, N)
     return sum(_lognorm_tdist_per_elem, ν)
 end
+
+# Constructors + cached/uncached `lognorm` + per-element `_elem_dist` (shared with
+# StdInverseGamma). `T` is derived from the parameter *eltype* promoted to a float, so an
+# integer `ν` doesn't make `T = Int` (which would break the `T(±Inf)`/`T(NaN)` moments)
+# and traced parameter arrays are not copied; the per-element kernels coerce via `float(ν)`.
+@cached_scalar_std StdTDist ν _lognorm_tdist
 
 @inline function _unnormed_kernel(d::StdTDist, z)
     ν = d.ν
@@ -70,8 +57,6 @@ function unnormed_logpdf(
     ) where {T, Tν, N}
     return _unnormed_kernel_sum(d, x)
 end
-
-@inline lognorm(d::StdTDist) = d.lognorm
 
 # ----- sampling -----------------------------------------------------------
 
