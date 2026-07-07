@@ -16,6 +16,11 @@ struct StdTDist{T, Tν, N, Tl} <: AbstractStdDist{T, N}
         lognorm = _lognorm_tdist(ν, prod(dims))
         return new{T, Tν, N, typeof(lognorm)}(ν, lognorm, dims)
     end
+    # Lognorm-free construction (pass `nothing`): the per-element transport kernels
+    # (`_std_cdf`/`_std_quantile`) never read `lognorm`, so skip the two `loggamma`s per call.
+    function StdTDist(ν::Number, lognorm::Nothing, dims::Dims{N}) where {N}
+        return new{float(eltype(ν)), typeof(ν), N, Nothing}(ν, lognorm, dims)
+    end
 end
 # Store `ν` as-is (`Tν = typeof(ν)` — scalar or array); derive the output eltype `T` as the
 # parameter *eltype* promoted to a float. This keeps an integer `ν` from making `T = Int`

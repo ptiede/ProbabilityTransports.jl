@@ -13,11 +13,22 @@ The result of [`transport_to`](@ref). It *behaves like the latent reference spac
 node tree that pushes a latent draw to the original distribution via [`latent_pfwd`](@ref) and
 evaluates the pulled-back target density via [`logpdf_pfwd`](@ref). Construct it with
 `transport_to(distribution, space)` rather than directly.
+
+The variate form follows the node kind: a scalar-kind transport (see
+`is_scalar_transport`) *is* a univariate distribution — `rand` draws a scalar, matching
+the scalar `latent_*`/`logpdf` contract — while everything else is multivariate.
 """
-struct TransportedDistribution{T, S, E} <: Dists.ContinuousMultivariateDistribution
+struct TransportedDistribution{T, S, E, V <: Dists.VariateForm} <: Dists.Distribution{V, Dists.Continuous}
     transport::T   # AbstractTransport node tree
     start::S       # original (target) distribution
     stop::E        # latent reference (StdNormal/StdUniform of dim n), or `nothing` (flat)
+end
+
+# `V` appears only in the supertype, so Julia generates no 3-arg convenience constructor;
+# this one derives the variate form from the node kind (a type constant, so it folds).
+function TransportedDistribution(transport, start, stop)
+    V = is_scalar_transport(transport) ? Dists.Univariate : Dists.Multivariate
+    return TransportedDistribution{typeof(transport), typeof(start), typeof(stop), V}(transport, start, stop)
 end
 
 """
@@ -117,7 +128,10 @@ latent_pback!(y, d::TransportedDistribution, x) = latent_pback!(y, getfield(d, :
 # reference `logpdf(stop, y)` — we return the transported point (for the likelihood)
 # without ever forming a Jacobian. The `TVFlat` method (`stop === nothing`), which does
 # the genuine change of variables on a TV transform, lives in the TV extension.
-function latent_pfwd_and_logdensity(d::TransportedDistribution, y)
+# Vector-path methods (here and per-space, e.g. the `TVFlat` one in the TV extension)
+# are typed `y::AbstractVector` so the `y::Number` boxing method below is unambiguous —
+# space dispatch (arg 1) and latent shape (arg 2) are orthogonal axes.
+function latent_pfwd_and_logdensity(d::TransportedDistribution, y::AbstractVector)
     return latent_pfwd(getfield(d, :transport), y), Dists.logpdf(d, y)
 end
 latent_pfwd_and_logdensity(d::TransportedDistribution, y::Number) =
@@ -139,10 +153,22 @@ logpdf_pfwd(d::TransportedDistribution, y) = last(latent_pfwd_and_logdensity(d, 
 Dists.logpdf(d::TransportedDistribution, y::AbstractVector) = Dists.logpdf(getfield(d, :stop), y)
 # Flat space (stop === nothing): there is no separate reference, so logpdf == logpdf_pfwd.
 Dists.logpdf(d::TransportedDistribution{<:Any, <:Any, Nothing}, y::AbstractVector) = logpdf_pfwd(d, y)
-# Scalar latent: box and re-dispatch on the vector methods above.
-Dists.logpdf(d::TransportedDistribution, y::Number) = Dists.logpdf(d, _box_latent(d, y))
+# Scalar latent: box and re-dispatch on the vector methods above. (`@with_real` emits the
+# `::Real` companion that keeps this ahead of the generic `Distributions` fallbacks.)
+@with_real Dists.logpdf(d::TransportedDistribution, y::Number) = Dists.logpdf(d, _box_latent(d, y))
 
-function Dists._rand!(rng::AbstractRNG, d::TransportedDistribution, x::AbstractVector)
+# Multivariate only: the univariate form must NOT intercept `_rand!` — Distributions'
+# univariate `rand(rng, d, dims...)` fills arrays by looping the scalar `rand` below.
+function Dists._rand!(
+        rng::AbstractRNG, d::TransportedDistribution{<:Any, <:Any, <:Any, Dists.Multivariate},
+        x::AbstractVector,
+    )
     rand!(rng, getfield(d, :stop), x)
     return x
+end
+
+# Univariate (scalar-kind) sampling: a scalar draw from the 1-dim latent reference.
+# (Distributions' univariate `rand(rng, d, dims...)` then builds arrays from this.)
+function Dists.rand(rng::AbstractRNG, d::TransportedDistribution{<:Any, <:Any, <:Any, Dists.Univariate})
+    return only(rand(rng, getfield(d, :stop)))
 end

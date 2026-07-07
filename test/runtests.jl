@@ -51,6 +51,7 @@ function fd_logjac(dto, y)
     end
     return first(logabsdet(J))
 end
+fd_logjac(dto, y::Number) = fd_logjac(dto, [y])   # scalar-kind dtos draw scalar latents
 
 # independent reconstruction of logpdf_pfwd; compare to the package's value.
 fd_fwd(dto, start, y) = logpdf(start, latent_pfwd(dto, y)) + fd_logjac(dto, y)
@@ -88,7 +89,7 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
         for D in (Normal(2.0, 3.0), Gamma(2.0, 1.5), Exponential(1.3), Beta(2.0, 3.0))
             for S in (StdNormal(), StdUniform())
                 dto = transport_to(D, S)
-                y = only(rand(rng, dto))   # scalar-kind ⇒ the whole round trip runs on scalars
+                y = rand(rng, dto)   # scalar-kind ⇒ univariate: draws are scalars
                 @test latent_pfwd(dto, latent_pback(dto, latent_pfwd(dto, y))) ≈ latent_pfwd(dto, y)
                 @test latent_pback(dto, latent_pfwd(dto, y)) ≈ y
             end
@@ -560,8 +561,8 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
         d = 1.0 + 2.0 * StdNormal()
         for S in (StdNormal(), StdUniform())
             dto = transport_to(d, S)
-            y = rand(rng, dto)
-            ref = S === StdNormal() ? StdNormal(1) : StdUniform(1)
+            y = rand(rng, dto)               # scalar-kind ⇒ scalar draw
+            ref = S === StdNormal() ? StdNormal() : StdUniform()   # 0-dim reference
             @test logpdf_pfwd(dto, y) ≈ logpdf(ref, y)
         end
     end
@@ -665,6 +666,12 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
         for (space, ys) in ((StdNormal(), y), (StdUniform(), u), (TVFlat(), y))
             dto = transport_to(Gamma(2.3, 1.1), space)
             @test dimension(dto) == 1
+            # scalar-kind ⇒ univariate distribution: rand draws scalars (flat has no
+            # reference measure to sample, so only the Std spaces)
+            if !(space isa TVFlat)
+                @test rand(rng, dto) isa Number
+                @test rand(rng, dto, 3) isa Vector{<:Number}
+            end
             @test latent_pfwd(dto, ys) == latent_pfwd(dto, [ys])
             @test logpdf_pfwd(dto, ys) ≈ logpdf_pfwd(dto, [ys])
             @test logpdf(dto, ys) ≈ logpdf(dto, [ys])
@@ -678,6 +685,13 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
         # the kind must propagate through the wrapper
         dta = transport_to(Normal(1.5, 0.3), StdNormal())
         @test latent_pback(dta, latent_pfwd(dta, y)) isa Number
+        # ...and equally through the flat PushforwardTransform: a pushforward of a
+        # scalar base keeps the same kind on every space
+        dpf = PushforwardDistribution(ExpMap(), StdNormal())
+        for space in (StdNormal(), TVFlat())
+            dtoP = transport_to(dpf, space)
+            @test latent_pback(dtoP, latent_pfwd(dtoP, y)) isa Number
+        end
         # the kind is static, NOT `dimension == 1`: a length-1 Product is
         # vector-kind, so it keeps vector semantics (exactly as TV's `as(Vector, 1)`)
         dtp = transport_to(product_distribution([Normal(2.0, 1.0)]), StdNormal())

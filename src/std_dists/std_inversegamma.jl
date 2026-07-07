@@ -19,6 +19,11 @@ struct StdInverseGamma{T, Tα, N, Tl} <: AbstractStdDist{T, N}
         lognorm = _lognorm_igamma(α, prod(dims))
         return new{T, Tα, N, typeof(lognorm)}(α, lognorm, dims)
     end
+    # Lognorm-free construction (pass `nothing`): the per-element transport kernels
+    # (`_std_cdf`/`_std_quantile`) never read `lognorm`, so skip the `loggamma` per call.
+    function StdInverseGamma(α::Number, lognorm::Nothing, dims::Dims{N}) where {N}
+        return new{float(eltype(α)), typeof(α), N, Nothing}(α, lognorm, dims)
+    end
 end
 
 # Compute the normalization
