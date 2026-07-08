@@ -55,13 +55,6 @@ dimension(c::ArrayTransport{<:Dists.Dirichlet}) =
 # `beta_inc`/`beta_inc_inv` return `(lower, upper)` tails; the lower tail is the cdf.
 @inline _beta_cdf(a, b, x) = first(SpecialFunctions.beta_inc(a, b, x))
 @inline _beta_quantile(a, b, p) = first(SpecialFunctions.beta_inc_inv(a, b, p))
-
-# The stick length `K` is the Dirichlet's parameter count — statically known — but we step
-# it with `@trace for`, a bounded *dynamic* loop rather than an unrolled trace: unrolling
-# `K - 1` iterations would balloon the trace for a high-dimensional simplex. The
-# loop-carried scalars (`remaining`, `β`) are promoted to traced values through `T`, so the
-# carry survives the traced loop; the scalar latent reads/writes go through `_rgetindex` /
-# `_rsetindex!` (routed through `@allowscalar` for traced arrays by the Reactant extension).
 function pfwd_step(c::ArrayTransport{<:Dists.Dirichlet}, y, index)
     d = c.dist
     α = d.alpha
