@@ -20,6 +20,12 @@ using LinearAlgebra: norm
 # subtyping across packages), so we forward the value/latent_pback drivers here.
 
 PT.dimension(t::TV.AbstractTransform) = TV.dimension(t)
+# The kind trait for TV transforms (they can't subtype `AbstractTransport`, so they need
+# their own fallback): TV's scalar kind is our scalar kind, with one addition — our
+# `PushforwardTransform` wrapper inherits its inner's kind (below), matching the core
+# `PushforwardTransport`, so a distribution keeps the same kind across Std and flat spaces.
+PT.is_scalar_transport(::TV.AbstractTransform) = false
+PT.is_scalar_transport(::TV.ScalarTransform) = true
 
 # Value-only step: ask TV for `NoLogJac` (exactly what `TV.transform` does) so we don't
 # materialize the per-element log-Jacobian buffer that `LogJac` allocates.
@@ -59,7 +65,15 @@ end
 # (`transform_with` via the index protocol handles a scalar transform fed a 1-vector).
 # This is the *only* `latent_pfwd_and_logdensity` method that forms a Jacobian; the Std
 # spaces (in `transported.jl`) return the closed-form reference instead.
-function PT.latent_pfwd_and_logdensity(d::PT.TransportedDistribution{<:Any, <:Any, Nothing}, y)
+# `y::AbstractVector` keeps this disjoint from the core `y::Number` boxing method
+# (which boxes scalars and re-dispatches here) — new spaces should type their vector
+# methods the same way.
+function PT.latent_pfwd_and_logdensity(d::PT.TransportedDistribution{<:Any, <:Any, Nothing}, y::AbstractVector)
+    # Guard the latent length here, at the flat space's sole density primitive: unlike the
+    # Std path, `TV.transform_with` consumes only `dimension` entries and silently ignores a
+    # too-long tail, so a direct `logpdf_pfwd` call would otherwise return a wrong density
+    # with no error. (The `logpdf` interface method checks too, but callers may target this.)
+    PT._check_latent_length(d, y)
     x, ℓ, _ = TV.transform_with(TV.LogJac(), getfield(d, :transport), y, firstindex(y))
     return x, Dists.logpdf(getfield(d, :start), x) + ℓ
 end
@@ -140,6 +154,9 @@ struct PushforwardTransform{F, I <: TV.AbstractTransform} <: TV.VectorTransform
     inner::I
 end
 TV.dimension(t::PushforwardTransform) = TV.dimension(t.inner)
+# Inherit the inner's kind, matching the core `PushforwardTransport`: a pushforward of a
+# scalar base stays scalar-kind whether transported to a Std space or to `TVFlat`.
+PT.is_scalar_transport(t::PushforwardTransform) = PT.is_scalar_transport(t.inner)
 
 function TV.transform_with(flag::TV.LogJacFlag, t::PushforwardTransform, y::AbstractVector, index)
     z, ℓi, index′ = TV.transform_with(flag, t.inner, y, index)

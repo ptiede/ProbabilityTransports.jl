@@ -12,6 +12,9 @@ StdExponential(dims::Dims{N}) where {N} = StdExponential{Float64, N}(dims)
 StdExponential(dims::Int...) = StdExponential(dims)
 StdExponential() = StdExponential{Float64, 0}(())
 
+StdExponential{T}(dims::Dims{N}) where {T, N} = StdExponential{T, N}(dims)
+StdExponential{T}(dims::Int...) where {T} = StdExponential{T}(dims)
+
 # ----- log-pdf split ------------------------------------------------------
 
 @inline function _unnormed_kernel(d::StdExponential, z)
@@ -61,3 +64,6 @@ Dists.var(d::StdExponential) = fill(one(eltype(d)), size(d))
 
 Dists.cdf(d::StdExponential{T, 0}, x::Number) where {T} = _std_cdf(d, x)
 Dists.quantile(d::StdExponential{T, 0}, p::Number) where {T} = _std_quantile(d, p)
+
+# the array-transport element (see `_elem_dist` in interface.jl): parameter-free, ignores `i`
+_elem_dist(::StdExponential{T}, i; lognorm::Bool = false) where {T} = StdExponential{T}()

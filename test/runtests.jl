@@ -51,6 +51,7 @@ function fd_logjac(dto, y)
     end
     return first(logabsdet(J))
 end
+fd_logjac(dto, y::Number) = fd_logjac(dto, [y])   # scalar-kind dtos draw scalar latents
 
 # independent reconstruction of logpdf_pfwd; compare to the package's value.
 fd_fwd(dto, start, y) = logpdf(start, latent_pfwd(dto, y)) + fd_logjac(dto, y)
@@ -88,7 +89,7 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
         for D in (Normal(2.0, 3.0), Gamma(2.0, 1.5), Exponential(1.3), Beta(2.0, 3.0))
             for S in (StdNormal(), StdUniform())
                 dto = transport_to(D, S)
-                y = rand(rng, dto)
+                y = rand(rng, dto)   # scalar-kind ⇒ univariate: draws are scalars
                 @test latent_pfwd(dto, latent_pback(dto, latent_pfwd(dto, y))) ≈ latent_pfwd(dto, y)
                 @test latent_pback(dto, latent_pfwd(dto, y)) ≈ y
             end
@@ -192,7 +193,7 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
         y = randn(rng, 1)
         @test latent_pfwd(dto, y) ≈ 1.0 + 2.0 * latent_pfwd(base, y)
         @test isapprox(fd_fwd(dto, D, y), logpdf_pfwd(dto, y); atol = 1.0e-5)
-        @test latent_pback(dto, latent_pfwd(dto, y)) ≈ y
+        @test latent_pback(dto, latent_pfwd(dto, y)) ≈ only(y)   # scalar-kind ⇒ scalar out
     end
 
     @testset "cheap scalar specializations (no erf/erfinv)" begin
@@ -403,9 +404,11 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
             @test dimension(dto) == 1
             y = randn(rng)
             x_pt = latent_pfwd(dto, [y])
+            @test latent_pfwd(dto, y) == x_pt   # scalar latent boxed at the driver
+            @test logpdf_pfwd(dto, y) ≈ logpdf_pfwd(dto, [y])
             @test logpdf(dto, [y]) ≈ logpdf_pfwd(dto, [y])               # flat coincidence
             @test isapprox(fd_fwd(dto, D, [y]), logpdf_pfwd(dto, [y]); atol = 1.0e-5)  # exact density
-            @test latent_pback(dto, x_pt) ≈ [y]
+            @test latent_pback(dto, x_pt) ≈ y   # scalar-kind ⇒ scalar out, like TV.inverse
         end
         # multivariate: matches asflat shape; round-trips
         for D in (MvNormal([1.0, -1.0], [2.0 0.5; 0.5 1.0]), Dirichlet([2.0, 3.0, 1.5]))
@@ -551,15 +554,15 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
                 y = S === TVFlat() ? randn(rng, dimension(dto)) : rand(rng, dto)
                 x = latent_pfwd(dto, y)
                 @test isapprox(fd_fwd(dto, d, y), logpdf_pfwd(dto, y); atol = 1.0e-5)
-                @test latent_pback(dto, x) ≈ y
+                @test latent_pback(dto, x) ≈ only(y)   # scalar-kind ⇒ scalar out
             end
         end
         # equal-dim coincidence over the Std spaces
         d = 1.0 + 2.0 * StdNormal()
         for S in (StdNormal(), StdUniform())
             dto = transport_to(d, S)
-            y = rand(rng, dto)
-            ref = S === StdNormal() ? StdNormal(1) : StdUniform(1)
+            y = rand(rng, dto)               # scalar-kind ⇒ scalar draw
+            ref = S === StdNormal() ? StdNormal() : StdUniform()   # 0-dim reference
             @test logpdf_pfwd(dto, y) ≈ logpdf(ref, y)
         end
     end
@@ -569,7 +572,12 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
         # logpdf_pfwd == logpdf(d, x)+lj). Guards the scalar-over-array n·log|s| Jacobian
         # and element-wise (vs matrix-product) scale.
         rng = MersenneTwister(16)
-        for D in (StdNormal(3), StdNormal(2, 2), StdExponential(3), StdUniform(4))
+        # The matrix-parameter entries are a regression: per-element params kept their own
+        # array shape, which broke the broadcast against the flattened latent block.
+        for D in (
+                StdNormal(3), StdNormal(2, 2), StdExponential(3), StdUniform(4),
+                StdInverseGamma([2.5 3.0; 3.5 4.0]), StdTDist([5.0 8.0; 10.0 12.0]),
+            )
             for S in (StdNormal(), StdUniform())
                 dto = transport_to(D, S)
                 n = dimension(dto)
@@ -646,6 +654,69 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
                 @test PT._ig_elem_quantile(α, PT._ig_elem_cdf(α, z)) ≈ z
             end
         end
+
+        @testset "lognorm = false skips the cache but stays first-class" begin
+            # The uncached form (used by the per-element transport path) must be
+            # indistinguishable from the cached one: `lognorm` recomputes on demand.
+            for (dc, dl) in (
+                    (StdInverseGamma(2.5), StdInverseGamma(2.5; lognorm = false)),
+                    (StdTDist(5.0), StdTDist(5.0; lognorm = false)),
+                    (StdInverseGamma([2.5, 3.0]), StdInverseGamma([2.5, 3.0]; lognorm = false)),
+                )
+                @test isnothing(dl.lognorm)
+                @test PT.lognorm(dl) ≈ PT.lognorm(dc)
+                xv = isempty(size(dc)) ? 0.7 : fill(0.7, size(dc))
+                @test logpdf(dl, xv) ≈ logpdf(dc, xv)
+            end
+        end
+    end
+
+    @testset "scalar latents on scalar-kind transports (mirrors TV)" begin
+        # The driver-level contract, mirroring TransformVariables' `ScalarTransform`
+        # kind: a scalar-kind transport speaks scalars at every latent entry point —
+        # in (`latent_pfwd`/`logpdf_pfwd`/`logpdf`) and out (`latent_pback`).
+        rng = MersenneTwister(21)
+        y = randn(rng)   # valid StdNormal / flat latent
+        u = rand(rng)    # valid StdUniform latent
+        for (space, ys) in ((StdNormal(), y), (StdUniform(), u), (TVFlat(), y))
+            dto = transport_to(Gamma(2.3, 1.1), space)
+            @test dimension(dto) == 1
+            # scalar-kind ⇒ univariate distribution: rand draws scalars (flat has no
+            # reference measure to sample, so only the Std spaces)
+            if !(space isa TVFlat)
+                @test rand(rng, dto) isa Number
+                @test rand(rng, dto, 3) isa Vector{<:Number}
+            end
+            @test latent_pfwd(dto, ys) == latent_pfwd(dto, [ys])
+            @test logpdf_pfwd(dto, ys) ≈ logpdf_pfwd(dto, [ys])
+            @test logpdf(dto, ys) ≈ logpdf(dto, [ys])
+            @test latent_pfwd_and_logdensity(dto, ys) == latent_pfwd_and_logdensity(dto, [ys])
+            # scalar out, and the scalar round trip closes
+            yb = latent_pback(dto, latent_pfwd(dto, ys))
+            @test yb isa Number
+            @test yb ≈ ys
+        end
+        # affine specializations wrap ScalarIdentity in a PushforwardTransport;
+        # the kind must propagate through the wrapper
+        dta = transport_to(Normal(1.5, 0.3), StdNormal())
+        @test latent_pback(dta, latent_pfwd(dta, y)) isa Number
+        # ...and equally through the flat PushforwardTransform: a pushforward of a
+        # scalar base keeps the same kind on every space
+        dpf = PushforwardDistribution(ExpMap(), StdNormal())
+        for space in (StdNormal(), TVFlat())
+            dtoP = transport_to(dpf, space)
+            @test latent_pback(dtoP, latent_pfwd(dtoP, y)) isa Number
+        end
+        # the kind is static, NOT `dimension == 1`: a length-1 Product is
+        # vector-kind, so it keeps vector semantics (exactly as TV's `as(Vector, 1)`)
+        dtp = transport_to(product_distribution([Normal(2.0, 1.0)]), StdNormal())
+        @test dimension(dtp) == 1
+        @test latent_pback(dtp, latent_pfwd(dtp, [y])) isa AbstractVector
+        @test_throws ArgumentError latent_pfwd(dtp, y)
+        # a scalar latent for a multi-dimensional transport errors clearly
+        dto2 = transport_to(StdNormal(2), StdNormal())
+        @test_throws ArgumentError latent_pfwd(dto2, y)
+        @test_throws ArgumentError logpdf_pfwd(dto2, y)
     end
 
     @testset "gamma sampler: finite for practical shapes, matches reference at extreme α" begin
@@ -696,7 +767,7 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
             xv = x isa AbstractArray ? x[1] : x
             @test -1.0 <= xv <= 2.0
             @test isapprox(fd_fwd(dto, d, y), logpdf_pfwd(dto, y); atol = 1.0e-5)
-            @test latent_pback(dto, x) ≈ y
+            @test latent_pback(dto, x) ≈ only(y)   # scalar-kind ⇒ scalar out
         end
 
         # regression: support endpoints intersect the truncation bounds with the BASE

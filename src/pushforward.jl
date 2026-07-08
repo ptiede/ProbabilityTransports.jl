@@ -70,6 +70,7 @@ end
 
 dimension(c::PushforwardTransport) = dimension(c.inner)   # invertible f ⇒ equal-dim
 space(c::PushforwardTransport) = space(c.inner)
+is_scalar_transport(c::PushforwardTransport) = is_scalar_transport(c.inner)
 
 function pfwd_step(c::PushforwardTransport, y, index)
     z, index′ = pfwd_step(c.inner, y, index)
@@ -96,6 +97,7 @@ struct ScalarIdentity{S} <: AbstractTransport
     space::S
 end
 dimension(::ScalarIdentity) = 1
+is_scalar_transport(::ScalarIdentity) = true
 function pfwd_step(c::ScalarIdentity, y, index)
     return _rgetindex(y, index), index + 1
 end

@@ -55,10 +55,6 @@ dimension(c::ArrayTransport{<:Dists.Dirichlet}) =
 # `beta_inc`/`beta_inc_inv` return `(lower, upper)` tails; the lower tail is the cdf.
 @inline _beta_cdf(a, b, x) = first(SpecialFunctions.beta_inc(a, b, x))
 @inline _beta_quantile(a, b, p) = first(SpecialFunctions.beta_inc_inv(a, b, p))
-
-# The stick length `K` is the Dirichlet's parameter count — statically known — so the loop
-# is fully unrolled when traced; only the scalar latent reads/writes need `_rgetindex` /
-# `_rsetindex!` (routed through `@allowscalar` for traced arrays by the Reactant extension).
 function pfwd_step(c::ArrayTransport{<:Dists.Dirichlet}, y, index)
     d = c.dist
     α = d.alpha
@@ -69,7 +65,7 @@ function pfwd_step(c::ArrayTransport{<:Dists.Dirichlet}, y, index)
     remaining = one(T)
     β = T(sum(α))   # running suffix sum: after subtracting α[i] it equals Σ α[(i+1):K]
     indexr = promote_index(index)
-    @inbounds for i in 1:m
+    @trace for i in 1:m
         αi = T(_rgetindex(α, i))
         u = space_cdf(c.space, _rgetindex(y, indexr + (i - 1)))
         β -= αi
@@ -91,7 +87,7 @@ function pback_step!(y, index, c::ArrayTransport{<:Dists.Dirichlet}, x)
     remaining = one(T)
     β = T(sum(α))   # running suffix sum, as in `pfwd_step`
     indexr = promote_index(index)
-    @inbounds for i in 1:m
+    @trace for i in 1:m
         αi = T(_rgetindex(α, i))
         β -= αi
         xi = _rgetindex(x, i)
