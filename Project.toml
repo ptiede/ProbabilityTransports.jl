@@ -1,7 +1,7 @@
 name = "ProbabilityTransports"
 uuid = "6cb8f75d-6579-4ae3-8431-bc9b57364f63"
 authors = ["Paul Tiede <ptiede91@gmail.com> and contributors"]
-version = "0.1.0"
+version = "0.1.1"
 
 [deps]
 ArgCheck = "dce04be8-c92d-5529-be00-80e4d2c0e197"
