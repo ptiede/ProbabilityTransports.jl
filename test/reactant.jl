@@ -96,6 +96,23 @@ _val(x) = Float64(Reactant.to_number(x))
         @test _val((@compile draw_i(dummy))(dummy)) > 0          # InverseGamma support
     end
 
+    @testset "gamma array samplers give INDEPENDENT draws" begin
+        # Regression guard. `_std_rand!` for `StdInverseGamma`/`StdTDist` (both backed by
+        # the gamma sampler) must fill the array with *distinct* draws. A per-element
+        # `@trace for i … _rand_gamma(rng, …)` loop silently fails here: the gamma
+        # sampler's nested `@trace while`/`@trace if` does not thread `rng.seed` across the
+        # outer iterations, so every element collapses to the *same* value (unique == 1).
+        # `_rand_gamma!` avoids the nested `@trace` by drawing whole arrays, which thread.
+        rng() = Reactant.ReactantRNG(Reactant.to_rarray(UInt64[0x1234, 0x5678]))
+        sig(r, out) = (Distributions._rand!(r, StdInverseGamma(3.0, (6,)), out); out)
+        oi = Array((@jit sig(rng(), Reactant.to_rarray(zeros(6)))))
+        @test all(>(0), oi)
+        @test length(unique(round.(oi; digits = 8))) == 6
+        st(r, out) = (Distributions._rand!(r, StdTDist(5.0, (6,)), out); out)
+        ot = Array((@jit st(rng(), Reactant.to_rarray(zeros(6)))))
+        @test length(unique(round.(ot; digits = 8))) == 6
+    end
+
     @testset "transport path traces under @compile" begin
         # The calls a sampler makes in its hot loop: transport, logpdf_pfwd,
         # latent_pfwd_and_logdensity, and latent_pback! — over the Reactant-fast nodes

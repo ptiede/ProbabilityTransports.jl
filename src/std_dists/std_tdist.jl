@@ -71,11 +71,15 @@ function Random.rand(rng::AbstractRNG, d::StdTDist{T, <:Number, 0}) where {T}
     return _rand_tdist(rng, d.ν)
 end
 
+# `T = Z / sqrt(W/ν)`, `W ~ χ²(ν) = 2·Gamma(ν/2, 1)`. Drawn as whole arrays so the RNG
+# threads under Reactant (see `_rand_gamma!`); a per-element `@trace for` calling scalar
+# `_rand_tdist` collapses every element to the same draw. `x` is used as scratch for the
+# gamma draws, then overwritten in place (each element reads only its own slot).
 function _std_rand!(rng::AbstractRNG, d::StdTDist{T}, x::AbstractArray) where {T}
     ν = d.ν
-    @trace for i in eachindex(x)
-        _rsetindex!(x, _rand_tdist(rng, _getith(ν, i)), i)
-    end
+    _rand_gamma!(rng, x, ν ./ 2)
+    z = randn(rng, eltype(x), size(x)...)
+    x .= z ./ sqrt.(2 .* x ./ ν)
     return x
 end
 

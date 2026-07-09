@@ -49,3 +49,46 @@ end
 
 _getith(x::Number, i) = x
 _getith(x::AbstractArray, i) = _rgetindex(x, i)
+
+#
+#    _rand_gamma!(rng, out, α)
+#
+# Fill `out` with independent `Gamma(α, 1)` draws, where `α` is either a scalar (broadcast
+# over `out`) or an array matching `size(out)`. This is the array counterpart of the scalar
+# `_rand_gamma` and backs the `_std_rand!` samplers for `StdInverseGamma`/`StdTDist` (and
+# `VLBIBeta` in VLBIImagePriors).
+#
+# It differs from a per-element `@trace for i … _rand_gamma(rng, …)` loop in one crucial
+# way: all randomness is drawn as *whole arrays* (`rand`/`randn`) and the fixed 32-iteration
+# rejection is a plain (compile-time-unrolled) Julia loop, so there is NO nested `@trace`
+# region. That matters under Reactant — a nested `@trace while` (the scalar sampler's
+# rejection loop) inside an outer per-element `@trace for` does not thread `rng.seed` across
+# the outer iterations, collapsing every element to the *same* draw. Array-level `rand`
+# advances the seed once per whole-array call and threads correctly.
+#
+# The boost uniform `U^(1/a)` (the `a < 1` identity) is drawn unconditionally and masked to
+# 1 for `a ≥ 1`, since the shape may be small for some elements and not others; the extra
+# draw for large-`a` elements is harmless. The unrolled loop always runs all 32 iterations
+# (no early exit) — the same bound the scalar `@trace while` traces to under Reactant.
+function _rand_gamma!(rng::AbstractRNG, out::AbstractArray, α)
+    T = eltype(out)
+    a_in = float.(α .+ zero(out))                       # length/shape of `out`; scalar or array α
+    small = a_in .< one(T)
+    a = ifelse.(small, a_in .+ one(T), a_in)
+    boost = ifelse.(small, rand(rng, T, size(out)...) .^ inv.(a_in), one(T))
+    d = a .- one(T) / 3
+    c = inv.(sqrt.(9 .* d))
+    dv = zero(out)
+    for _ in 1:32
+        x = randn(rng, T, size(out)...)
+        u = rand(rng, T, size(out)...)
+        v = (one(T) .+ c .* x) .^ 3
+        vpos = v .> zero(T)
+        vsafe = ifelse.(vpos, v, one(T))               # keep `log(vsafe)` finite when v <= 0
+        cand = vpos .& (log.(u) .< x .^ 2 ./ 2 .+ d .- d .* vsafe .+ d .* log.(vsafe))
+        newacc = cand .& (dv .== zero(T))              # keep the first accepted draw per element
+        dv = ifelse.(newacc, d .* vsafe, dv)
+    end
+    out .= boost .* dv
+    return out
+end
