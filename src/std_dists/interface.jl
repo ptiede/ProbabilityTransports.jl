@@ -123,3 +123,14 @@ end
 @with_real function Dists._rand!(rng::AbstractRNG, d::AbstractStdDist{T, N}, x::AbstractArray{<:Number, N}) where {T, N}
     return _std_rand!(rng, d, x)
 end
+
+# ----- transport target space (the `space_*` trait from spaces.jl) -----------
+# A `Std*` distribution doubles as a target space for `transport_to`. The trait is
+# per-coordinate, so it derives from the 0-dim element distribution (`_elem_dist`) via the
+# ordinary `cdf`/`quantile`/`logpdf`: a family that implements those (0-dim) plus `_elem_dist`
+# is usable as a space with no separate `space_*` methods. `space_dimension` keeps the
+# type-keyed default of 1 (spaces.jl); a family only overrides it if a scalar dof consumes
+# ≠ 1 latent coordinate.
+space_cdf(d::AbstractStdDist, y) = Dists.cdf(_elem_dist(d, 1), y)
+space_quantile(d::AbstractStdDist, u) = Dists.quantile(_elem_dist(d, 1), u)
+space_logpdf(d::AbstractStdDist, y) = Dists.logpdf(_elem_dist(d, 1), y)

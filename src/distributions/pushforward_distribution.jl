@@ -152,9 +152,9 @@ Dists.var(d::PushforwardDistribution{<:AffineTransform, <:Any, 1}) = diag(Dists.
 # cdf/quantile for a scalar (0-dim) base: `cdf_x(x) = cdf_z(f⁻¹(x))`,
 # `quantile_x(p) = f(quantile_z(p))` (branchless ⇒ traces under Reactant).
 Dists.cdf(d::PushforwardDistribution{<:ScaleShift, <:Any, 0}, x::Number) =
-    _std_cdf(d.base, inverse(d.f)(x))
+    Dists.cdf(d.base, inverse(d.f)(x))
 Dists.quantile(d::PushforwardDistribution{<:ScaleShift, <:Any, 0}, p::Number) =
-    d.f(_std_quantile(d.base, p))
+    d.f(Dists.quantile(d.base, p))
 
 # log-cdf / log-ccdf (used by `Truncated`'s constructor). `log(cdf)`/`log1p(-cdf)` — reuses
 # `cdf`, accepts traced numbers, and traces. `@with_real` also emits the `<:Real` overloads

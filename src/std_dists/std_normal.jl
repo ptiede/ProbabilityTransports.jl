@@ -51,43 +51,11 @@ Dists.var(d::StdNormal) = ones(eltype(d), size(d))
 Dists.cov(d::StdNormal) = I(length(d))
 
 
-# cdf / quantile
-
-# Branchless elementary `erf` (Abramowitz & Stegun 7.1.26, |error| < 1.5e-7), built from only
-# +,-,*,/,exp,abs,copysign — so it lowers to `stablehlo`/`arith` constants rather than
-# `chlo.erf`. This sidesteps an Enzyme-JAX batching bug (EnzymeAD/Enzyme-JAX#2559): the reverse
-# rule of `chlo.erf` emits its coefficient `2/√π` as a `chlo.constant`; when the surrounding
-# function is then batched (e.g. an N-sample Monte-Carlo estimator), `EnzymeBatchPass` resizes
-# the constant's result type but not its `value` attribute, producing a malformed `chlo.constant`
-# that fails MLIR verification. An elementary erf keeps every constant in dialects whose batched
-# constants are repaired downstream, so it compiles cleanly. Remove once #2559 lands.
-@inline function _erf_poly(x)
-    o = one(x)
-    p = oftype(x, 0.3275911)
-    a1 = oftype(x, 0.254829592)
-    a2 = oftype(x, -0.284496736)
-    a3 = oftype(x, 1.421413741)
-    a4 = oftype(x, -1.453152027)
-    a5 = oftype(x, 1.061405429)
-    ax = abs(x)
-    t = o / (o + p * ax)
-    poly = ((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t
-    return copysign(o - poly * exp(-ax * ax), x)
-end
-
-# TODO: simplify when EnzymeAD/Enzyme-JAX#2559 is merged and a new version is tagged and released
-@inline _erf_std(x) = within_compile() ? _erf_poly(x) : erf(x)
-@inline _std_cdf(::StdNormal, x) = (one(x) + _erf_std(x / sqrt(oftype(x, 2)))) / 2
-@inline _std_quantile(::StdNormal, p) = sqrt(oftype(p, 2)) * erfinv(2 * p - one(p))
-
-Dists.cdf(d::StdNormal, x::Number) = _std_cdf(d, x)
-Dists.quantile(d::StdNormal, p::Number) = _std_quantile(d, p)
+# cdf / quantile. Only the 0-dim form is meaningful (a multivariate Std dist has no scalar
+# cdf); the `space_*` trait and pushforward reach it through the 0-dim element / base — see
+# interface.jl and pushforward_distribution.jl.
+Dists.cdf(::StdNormal{T, 0}, x::Number) where {T} = (one(x) + erf(x / sqrt(oftype(x, 2)))) / 2        # Φ
+Dists.quantile(::StdNormal{T, 0}, p::Number) where {T} = sqrt(oftype(p, 2)) * erfinv(2 * p - one(p)) # Φ⁻¹
 
 # the array-transport element (see `_elem_dist` in interface.jl): parameter-free, ignores `i`
 _elem_dist(::StdNormal{T}, i; lognorm::Bool = false) where {T} = StdNormal{T}()
-
-# transport spaces
-space_cdf(d::StdNormal, y) = _std_cdf(d, y)        # Φ  (defined in StdDists/std_normal.jl)
-space_quantile(d::StdNormal, u) = _std_quantile(d, u)  # Φ⁻¹
-space_logpdf(::StdNormal, y) = -y * y / 2 - oftype(y, log(2π) / 2)
-space_dimension(::Type{<:StdNormal}) = 1

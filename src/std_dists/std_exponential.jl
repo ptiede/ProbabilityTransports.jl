@@ -59,11 +59,8 @@ Dists.var(d::StdExponential) = fill(one(eltype(d)), size(d))
 
 # ----- cdf / quantile -----------------------------------------------------
 
-@inline _std_cdf(::StdExponential, x) = -expm1(-x)
-@inline _std_quantile(::StdExponential, p) = -log1p(-p)
-
-Dists.cdf(d::StdExponential{T, 0}, x::Number) where {T} = _std_cdf(d, x)
-Dists.quantile(d::StdExponential{T, 0}, p::Number) where {T} = _std_quantile(d, p)
+Dists.cdf(::StdExponential{T, 0}, x::Number) where {T} = -expm1(-x)
+Dists.quantile(::StdExponential{T, 0}, p::Number) where {T} = -log1p(-p)
 
 # the array-transport element (see `_elem_dist` in interface.jl): parameter-free, ignores `i`
 _elem_dist(::StdExponential{T}, i; lognorm::Bool = false) where {T} = StdExponential{T}()

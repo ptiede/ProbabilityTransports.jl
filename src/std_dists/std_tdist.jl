@@ -130,12 +130,9 @@ end
     return ifelse(p < oftype(p, 0.5), -z_abs, z_abs)
 end
 
-@inline _std_cdf(d::StdTDist, x) = _t_elem_cdf(d.ν, x)
-@inline _std_quantile(d::StdTDist, p) = _t_elem_quantile(d.ν, p)
-
 function Dists.cdf(d::StdTDist{T, <:Number, 0}, x::Number) where {T}
-    return _std_cdf(d, x)
+    return _t_elem_cdf(d.ν, x)
 end
 function Dists.quantile(d::StdTDist{T, <:Number, 0}, p::Number) where {T}
-    return _std_quantile(d, p)
+    return _t_elem_quantile(d.ν, p)
 end

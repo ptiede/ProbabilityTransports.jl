@@ -101,12 +101,9 @@ end
 @inline _ig_elem_cdf(α, x) = last(SpecialFunctions.gamma_inc(α, inv(x), 0))
 @inline _ig_elem_quantile(α, p) = inv(SpecialFunctions.gamma_inc_inv(α, one(p) - p, p))
 
-@inline _std_cdf(d::StdInverseGamma, x) = _ig_elem_cdf(d.α, x)
-@inline _std_quantile(d::StdInverseGamma, p) = _ig_elem_quantile(d.α, p)
-
 function Dists.cdf(d::StdInverseGamma{T, <:Number, 0}, x::Number) where {T}
-    return _std_cdf(d, x)
+    return _ig_elem_cdf(d.α, x)
 end
 function Dists.quantile(d::StdInverseGamma{T, <:Number, 0}, p::Number) where {T}
-    return _std_quantile(d, p)
+    return _ig_elem_quantile(d.α, p)
 end

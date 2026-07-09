@@ -63,19 +63,10 @@ Dists.mean(d::StdUniform) = fill(eltype(d)(0.5), size(d))
 Dists.var(d::StdUniform) = fill(eltype(d)(1) / eltype(d)(12), size(d))
 
 
-# ----- cdf / quantile
-
-@inline _std_cdf(::StdUniform, x) = clamp(x, zero(x), one(x))
-@inline _std_quantile(::StdUniform, p) = p
-
-Dists.cdf(d::StdUniform{T, 0}, x::Number) where {T} = _std_cdf(d, x)
-Dists.quantile(d::StdUniform{T, 0}, p::Number) where {T} = _std_quantile(d, p)
+# ----- cdf / quantile (reached through the 0-dim element / base — see interface.jl and
+# pushforward_distribution.jl)
+Dists.cdf(::StdUniform{T, 0}, x::Number) where {T} = clamp(x, zero(x), one(x))
+Dists.quantile(::StdUniform{T, 0}, p::Number) where {T} = p
 
 # the array-transport element (see `_elem_dist` in interface.jl): parameter-free, ignores `i`
 _elem_dist(::StdUniform{T}, i; lognorm::Bool = false) where {T} = StdUniform{T}()
-
-# ----- transport interface
-space_cdf(::StdUniform, y) = clamp(y, zero(y), one(y))
-space_quantile(::StdUniform, u) = u
-space_logpdf(::StdUniform, y) = zero(y)
-space_dimension(::Type{<:StdUniform}) = 1

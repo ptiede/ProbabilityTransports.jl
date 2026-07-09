@@ -75,15 +75,12 @@ Dists.insupport(d::AngularProjectedNormal, x::AbstractVector) = length(x) == len
 # Closed-form projected-normal angular density, summed over independent directions. For one
 # direction with `η = γ cos(θ − μ)`:
 #   f(θ) = e^{−γ²/2}/2π  +  (η/√{2π}) · e^{−γ² sin²(θ−μ)/2} · Φ(η),   Φ(x) = (1+erf(x/√2))/2.
-# Vectorized and branchless so it traces under Reactant. `_erf_poly` (an elementary,
-# `chlo.erf`-free erf defined in `std_dists/std_normal.jl`) is used instead of `erf` to
-# sidestep the Enzyme-JAX constant-batching bug EnzymeAD/Enzyme-JAX#2559 (see the comment
-# there). Revert to `erf` once #2559 lands.
+# Vectorized and branchless so it traces under Reactant.
 function Dists.logpdf(d::AngularProjectedNormal, θ::AbstractVector)
     T = float(eltype(d.ν))
     dθ = θ .- d.μ
     η = d.γ .* cos.(dθ)
-    Φ = (1 .+ _erf_poly.(η ./ sqrt(T(2)))) ./ 2
+    Φ = (1 .+ erf.(η ./ sqrt(T(2)))) ./ 2
     f = exp.(-(d.γ .^ 2) ./ 2) ./ (2 * T(π)) .+
         (η ./ sqrt(2 * T(π))) .* exp.(-(d.γ .^ 2) .* sin.(dθ) .^ 2 ./ 2) .* Φ
     return sum(log, f)
