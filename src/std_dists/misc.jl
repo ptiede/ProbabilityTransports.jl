@@ -20,9 +20,9 @@ function _rand_gamma(rng::AbstractRNG, α::Number)
     af = float(α)
     a = within_compile() ? promote_to_traced(af) : af
     T = typeof(a)
-    # shape < 1 via the boost identity `Gamma(a) = Gamma(a+1) · U^(1/a)`.
+    boost = rand(rng, T)
     @trace if a < one(T)
-        boost = rand(rng, T)^inv(a)
+        boost = boost^inv(a)
         a = a + one(T)
     else
         boost = one(T)
