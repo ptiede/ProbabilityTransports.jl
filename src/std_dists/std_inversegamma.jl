@@ -49,12 +49,11 @@ function Random.rand(rng::AbstractRNG, d::StdInverseGamma{T, <:Number, 0}) where
     return inv(_rand_gamma(rng, d.α))
 end
 
-# `InverseGamma(α, 1)` = `1 / Gamma(α, 1)`, drawn as a whole array so the RNG threads under
-# Reactant (see `_rand_gamma!`); a per-element `@trace for` calling scalar `_rand_gamma`
-# collapses every element to the same draw.
 function _std_rand!(rng::AbstractRNG, d::StdInverseGamma{T}, x::AbstractArray) where {T}
-    _rand_gamma!(rng, x, d.α)
-    x .= inv.(x)
+    α = d.α
+    @trace for i in eachindex(x)
+        _rsetindex!(x, inv(_rand_gamma(rng, _getith(α, i))), i)
+    end
     return x
 end
 

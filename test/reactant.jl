@@ -97,12 +97,14 @@ _val(x) = Float64(Reactant.to_number(x))
     end
 
     @testset "gamma array samplers give INDEPENDENT draws" begin
-        # Regression guard. `_std_rand!` for `StdInverseGamma`/`StdTDist` (both backed by
-        # the gamma sampler) must fill the array with *distinct* draws. A per-element
-        # `@trace for i … _rand_gamma(rng, …)` loop silently fails here: the gamma
-        # sampler's nested `@trace while`/`@trace if` does not thread `rng.seed` across the
-        # outer iterations, so every element collapses to the *same* value (unique == 1).
-        # `_rand_gamma!` avoids the nested `@trace` by drawing whole arrays, which thread.
+        # Regression guard. `_std_rand!` for `StdInverseGamma`/`StdTDist` fills the array
+        # with a per-element `@trace for i … _rand_gamma(rng, …)` loop, so each draw must be
+        # *distinct*. This silently collapsed to a single value (unique == 1) when the first
+        # RNG op inside `_rand_gamma` lived in a nested `@trace` region (the `α<1` boost was
+        # inside `@trace if`): Reactant does not thread `rng.seed` from a nested region into
+        # the outer loop's carried state, so every element restarted from the same seed. The
+        # fix is the *leading* unconditional `boost = rand(rng, T)` in `_rand_gamma`, which
+        # primes the outer loop's `rng.seed` carry before any nested `@trace`.
         rng() = Reactant.ReactantRNG(Reactant.to_rarray(UInt64[0x1234, 0x5678]))
         sig(r, out) = (Distributions._rand!(r, StdInverseGamma(3.0, (6,)), out); out)
         oi = Array((@jit sig(rng(), Reactant.to_rarray(zeros(6)))))
@@ -231,5 +233,27 @@ _val(x) = Float64(Reactant.to_number(x))
             s += _val(cf(Reactant.to_rarray(UInt64[rand(UInt64), rand(UInt64)])))
         end
         @test isapprox(s / N, 3.7; atol = 0.1)   # mean of Gamma(3.7, 1) is 3.7
+    end
+
+    @testset "_rand_gamma threads the boost draw for α < 1 under @compile" begin
+        # Regression for the small-shape (`α < 1`) path, which takes the boost identity
+        # `Gamma(α) = Gamma(α+1)·U^(1/α)`. The boost uniform `rand(rng, T)` once lived
+        # *inside* the `@trace if a < one(T)` branch; a `rand` drawn inside a `@trace if`
+        # does not thread `rng.seed`, so every traced call returned the SAME draw (and the
+        # mean was wrong). It is now drawn unconditionally, before the branch. The α ≥ 1
+        # test above cannot catch this — it never enters the boost branch.
+        α = 0.3
+        gdraw(seed) = PT._rand_gamma(Reactant.ReactantRNG(seed), α)
+        cf = @compile gdraw(Reactant.to_rarray(UInt64[1, 2]))
+        N = 50_000
+        draws = Float64[]
+        s = 0.0
+        for _ in 1:N
+            d = _val(cf(Reactant.to_rarray(UInt64[rand(UInt64), rand(UInt64)])))
+            s += d
+            length(draws) < 1000 && push!(draws, d)
+        end
+        @test isapprox(s / N, α; atol = 0.02)        # mean of Gamma(0.3, 1) is 0.3
+        @test length(unique(draws)) > 1              # not "the same draw over and over"
     end
 end
