@@ -113,14 +113,32 @@ lognorm(d::PushforwardDistribution) = d.lognorm
 Dists.mean(d::PushforwardDistribution{<:Union{ScaleShift, AffineTransform}}) =
     d.f(Dists.mean(d.base))
 
-# Support endpoints of a scalar element-wise affine pushforward. The map is monotone
-# (increasing for s > 0, decreasing for s < 0), so the endpoints are the mapped base
-# endpoints in either order. Needed so `Truncated`/flat transforms see the true support.
-function Base.minimum(d::PushforwardDistribution{<:ScaleShift{<:Number, <:Number}, <:Any, 0})
-    return min(d.f(Dists.minimum(d.base)), d.f(Dists.maximum(d.base)))
+# Strictly increasing scalar maps (a `ScaleShift` scale is positive by construction). Only
+# these get a pushforward cdf, quantile and support; any other map throws rather than
+# returning the cdf of a map that may not be monotone.
+_increasing(f) = false
+_increasing(::ScaleShift) = true
+_increasing(::typeof(exp)) = true
+
+function _check_increasing(f)
+    _increasing(f) || throw(
+        ArgumentError(
+            "the cdf, quantile and support of a pushforward need a strictly increasing map; " *
+                "$f is not declared monotone (add a `ProbabilityTransports._increasing` method)"
+        )
+    )
+    return nothing
 end
-function Base.maximum(d::PushforwardDistribution{<:ScaleShift{<:Number, <:Number}, <:Any, 0})
-    return max(d.f(Dists.minimum(d.base)), d.f(Dists.maximum(d.base)))
+
+# Support endpoints of a scalar pushforward: the mapped base endpoints. Needed so
+# `Truncated`/flat transforms see the true support.
+function Base.minimum(d::PushforwardDistribution{<:Any, <:Any, 0})
+    _check_increasing(d.f)
+    return d.f(Dists.minimum(d.base))
+end
+function Base.maximum(d::PushforwardDistribution{<:Any, <:Any, 0})
+    _check_increasing(d.f)
+    return d.f(Dists.maximum(d.base))
 end
 
 Dists.rand(rng::AbstractRNG, d::PushforwardDistribution) = d.f(rand(rng, d.base))
@@ -149,18 +167,22 @@ function Dists.cov(d::PushforwardDistribution{<:AffineTransform, <:Any, 1})
 end
 Dists.var(d::PushforwardDistribution{<:AffineTransform, <:Any, 1}) = diag(Dists.cov(d))
 
-# cdf/quantile for a scalar (0-dim) base: `cdf_x(x) = cdf_z(f⁻¹(x))`,
+# cdf/quantile for a scalar (0-dim) base and an increasing map: `cdf_x(x) = cdf_z(f⁻¹(x))`,
 # `quantile_x(p) = f(quantile_z(p))` (branchless ⇒ traces under Reactant).
-Dists.cdf(d::PushforwardDistribution{<:ScaleShift, <:Any, 0}, x::Number) =
-    Dists.cdf(d.base, inverse(d.f)(x))
-Dists.quantile(d::PushforwardDistribution{<:ScaleShift, <:Any, 0}, p::Number) =
-    d.f(Dists.quantile(d.base, p))
+function Dists.cdf(d::PushforwardDistribution{<:Any, <:Any, 0}, x::Number)
+    _check_increasing(d.f)
+    return Dists.cdf(d.base, inverse(d.f)(x))
+end
+function Dists.quantile(d::PushforwardDistribution{<:Any, <:Any, 0}, p::Number)
+    _check_increasing(d.f)
+    return d.f(Dists.quantile(d.base, p))
+end
 
 # log-cdf / log-ccdf (used by `Truncated`'s constructor). `log(cdf)`/`log1p(-cdf)` — reuses
 # `cdf`, accepts traced numbers, and traces. `@with_real` also emits the `<:Real` overloads
 # that break the ambiguity with Distributions' generic `logcdf`/`logccdf`.
-@with_real Dists.logcdf(d::PushforwardDistribution{<:ScaleShift, <:Any, 0}, x::Number) = log(Dists.cdf(d, x))
-@with_real Dists.logccdf(d::PushforwardDistribution{<:ScaleShift, <:Any, 0}, x::Number) = log1p(-Dists.cdf(d, x))
+@with_real Dists.logcdf(d::PushforwardDistribution{<:Any, <:Any, 0}, x::Number) = log(Dists.cdf(d, x))
+@with_real Dists.logccdf(d::PushforwardDistribution{<:Any, <:Any, 0}, x::Number) = log1p(-Dists.cdf(d, x))
 
 function Base.show(io::IO, d::PushforwardDistribution)
     print(io, "PushforwardDistribution(f=", nameof(typeof(d.f)), ", base=", nameof(typeof(d.base)))

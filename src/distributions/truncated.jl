@@ -79,8 +79,10 @@ function Dists.cdf(d::Truncated, x::Number)
     raw = (Dists.cdf(d.untruncated, x) - d.lcdf) * exp(-d.logtp)
     return clamp(raw, zero(raw), one(raw))
 end
+# `_clamp_unit` again after the rescaling: a `p` held inside (0, 1) can round onto the
+# endpoint here (`0.5 + 0.5 * prevfloat(1.0) == 1.0`), whose base quantile is infinite.
 function Dists.quantile(d::Truncated, p::Number)
-    return Dists.quantile(d.untruncated, d.lcdf + p * exp(d.logtp))
+    return Dists.quantile(d.untruncated, _clamp_unit(d.lcdf + p * exp(d.logtp)))
 end
 
 # inverse-CDF sampling (no rejection loop)

@@ -211,16 +211,22 @@ function TV.transform_with(
     )
     (; inner_transformation, dims) = t
     T = eltype(y)
-    ℓ = TV.logjac_zero(flag, T)
+    d = TV.dimension(inner_transformation)
+    n = prod(dims)
+    # Reactant's loop raising vectorizes a traced loop only when it carries a single value,
+    # so the angles and their log-Jacobian terms are filled by separate loops.
     out = similar(y, dims)
-    index0 = index
-    @trace for i in eachindex(out)
-        θ, ℓi, index2 = TV.transform_with(flag, inner_transformation, y, index0)
-        index0 = index2
-        ℓ += ℓi
+    @trace track_numbers = false for i in 1:n
+        θ, _, _ = TV.transform_with(flag, inner_transformation, y, index + d * (i - 1))
         PT._rsetindex!(out, θ, i)
     end
-    return out, ℓ, index + TV.dimension(inner_transformation) * length(out)
+    flag isa TV.NoLogJac && return out, TV.logjac_zero(flag, T), index + d * n
+    ℓs = similar(y, n)
+    @trace track_numbers = false for i in 1:n
+        _, ℓi, _ = TV.transform_with(flag, inner_transformation, y, index + d * (i - 1))
+        PT._rsetindex!(ℓs, ℓi, i)
+    end
+    return out, sum(ℓs), index + d * n
 end
 
 function TV.inverse_at!(x, index, ::AngleTransform, y::Number)

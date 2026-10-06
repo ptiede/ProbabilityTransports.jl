@@ -396,6 +396,53 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
         @test logpdf(pd, θ) ≈ logpdf(d, θ)
     end
 
+    @testset "WrappedNormal: one latent per angle, transports EXACTLY to Std" begin
+        rng = MersenneTwister(31)
+        # brute-force wrapped sum over 101 sheets
+        wn(θ, μ, σ) = sum(k -> exp(-(θ - μ + 2π * k)^2 / (2σ^2)), -50:50) / (σ * sqrt(2π))
+        for σ in (0.05, 0.3, 1.5, π - 1.0e-9, π, 2.44, 6.0), (μ, θ) in ((0.0, 0.4), (2.9, -3.0), (-1.0, π))
+            @test exp(logpdf(WrappedNormal(μ, σ), [θ])) ≈ wn(θ, μ, σ) rtol = 1.0e-10
+        end
+        for σ in (0.3, 2.44, 6.0)
+            d = WrappedNormal(0.7, σ)
+            θs = range(-π, π; length = 20_001)[1:(end - 1)]
+            @test sum(θ -> exp(logpdf(d, [θ])), θs) * step(θs) ≈ 1.0 rtol = 1.0e-8
+            # circular moments of the pushforward: E cos(k(θ − μ)) = exp(−k²σ²/2)
+            dto = transport_to(d, StdNormal())
+            θd = [only(latent_pfwd(dto, rand(rng, dto))) for _ in 1:200_000]
+            for k in 1:2
+                @test mean(cos.(k .* (θd .- 0.7))) ≈ exp(-k^2 * σ^2 / 2) atol = 0.005
+            end
+            @test all(x -> -π ≤ x ≤ π, θd)
+        end
+        # σ = 2.44 has the mean resultant length of VonMises(κ = 1/π²)
+        κ = 1 / π^2
+        θq = range(-π, π; length = 20_001)
+        @test exp(-2.44^2 / 2) ≈ sum(θ -> cos(θ) * exp(κ * cos(θ)), θq) / sum(θ -> exp(κ * cos(θ)), θq) rtol = 0.01
+
+        μv, σv = [0.3, -2.0, 3.0], [0.5, 2.44, 4.0]
+        d = WrappedNormal(μv, σv)
+        @test length(d) == 3
+        for S in (StdNormal(), StdUniform())
+            dto = transport_to(d, S)
+            @test dimension(dto) == 3
+            y = rand(rng, dto)
+            θ = latent_pfwd(dto, y)
+            # the latent density is the reference itself: logpdf_pfwd is N(0, I) (or U) at y
+            @test logpdf_pfwd(dto, y) ≈ logpdf(S isa StdNormal ? StdNormal(3) : StdUniform(3), y)
+            @test latent_pfwd(dto, latent_pback(dto, θ)) ≈ θ
+        end
+        dto = transport_to(d, StdNormal())
+        y = randn(rng, 3)
+        @test latent_pfwd(dto, y) ≈ mod.(μv .+ σv .* y .+ π, 2π) .- π
+        # the inverse lands on the principal sheet
+        @test latent_pback(dto, [0.3 + 0.1, -2.0 + 3.0, -3.0]) ≈ [0.1, 3.0, (-3.0 - 3.0 + 2π)] ./ σv
+        @test logpdf(product_distribution([WrappedNormal(μv[i], σv[i]) for i in 1:3]), latent_pfwd(dto, y)) ≈
+            logpdf(d, latent_pfwd(dto, y))
+        @test_throws "WrappedNormal σ must be positive" WrappedNormal(0.0, 0.0)
+        @test_throws "has no flat transport" transport_to(d, TVFlat())
+    end
+
     @testset "flat space (TransformVariables extension)" begin
         rng = MersenneTwister(11)
         # univariate: scalar TV transform, vector-in/scalar-out convention
@@ -770,6 +817,20 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
             @test latent_pback(dto, x) ≈ only(y)   # scalar-kind ⇒ scalar out
         end
 
+        # far latent tails of a one-sided truncation saturate at finite values in the
+        # StdNormal space: the rescaled quantile argument is held inside (0, 1)
+        @testset "one-sided truncation stays finite in the StdNormal tails" begin
+            for (dt, side) in ((PT.Truncated(Normal(0.0, 0.1); lower = 0.0), 1), (PT.Truncated(Normal(); upper = 1.0), -1))
+                t = transport_to(dt, StdNormal())
+                ys = side .* [0.0, 4.0, 8.0, 8.2, 8.5, 12.0, 40.0]
+                xs = [only(latent_pfwd(t, [y])) for y in ys]
+                @test all(isfinite, xs)
+                @test issorted(side .* xs)
+                @test all(x -> insupport(dt, x), xs)
+            end
+            @test isfinite(quantile(PT.Truncated(Normal(0.0, 0.1); lower = 0.0), prevfloat(1.0)))
+        end
+
         # regression: support endpoints intersect the truncation bounds with the BASE
         # support. A one-sided truncation of a bounded base must not widen its support —
         # `Truncated(Exponential(); upper=1)` once mapped ℝ → (-∞, 1) in flat space, letting
@@ -792,17 +853,50 @@ PT.ChangesOfVariables.with_logabsdet_jacobian(::LogMap, x) = (log.(x), -sum(log,
                 @test 0.0 <= x <= 1.0
                 @test isfinite(logpdf(dexp, max(x, eps())))
             end
-            # scalar ScaleShift pushforward bases report their support (and flip with s < 0)
+            # scalar ScaleShift pushforward bases report their support; the scale is positive
             dscaled = PT.PushforwardDistribution(PT.ScaleShift(0.0, 0.1), StdExponential())
             @test minimum(dscaled) == 0.0 && maximum(dscaled) == Inf
-            dneg = PT.PushforwardDistribution(PT.ScaleShift(0.0, -1.0), StdExponential())
-            @test minimum(dneg) == -Inf && maximum(dneg) == 0.0
+            @test_throws "scale must be positive" PT.ScaleShift(0.0, -1.0)
+            @test_throws "scale must be positive" PT.ScaleShift([0.0, 0.0], [1.0, 0.0])
             # ...so a one-sided truncation of a scaled base is bounded in flat space too
             dts = transport_to(PT.Truncated(dscaled; upper = 1.0), TVFlat())
             for y in (-30.0, 0.0, 30.0)
                 x = latent_pfwd(dts, [y])
                 @test 0.0 <= x <= 1.0
             end
+        end
+
+        @testset "pushforward by a monotone map: cdf, quantile, truncation" begin
+            # exp is increasing: exp ∘ (0.3 + 0.8 z) is LogNormal(0.3, 0.8)
+            dln = PT.PushforwardDistribution(exp, PT.PushforwardDistribution(PT.ScaleShift(0.3, 0.8), StdNormal()))
+            refln = LogNormal(0.3, 0.8)
+            @test minimum(dln) == 0.0 && maximum(dln) == Inf
+            for x in (0.4, 1.3, 5.0)
+                @test cdf(dln, x) ≈ cdf(refln, x)
+                @test logcdf(dln, x) ≈ logcdf(refln, x)
+                @test logccdf(dln, x) ≈ logccdf(refln, x)
+            end
+            for p in (0.1, 0.5, 0.9)
+                @test quantile(dln, p) ≈ quantile(refln, p)
+            end
+            dt = PT.Truncated(dln; upper = 4.0)
+            reft = truncated(refln; upper = 4.0)
+            for x in (0.5, 2.0, 3.9)
+                @test logpdf(dt, x) ≈ logpdf(reft, x)
+                @test cdf(dt, x) ≈ cdf(reft, x)
+            end
+            dto = transport_to(dt, StdNormal())
+            for y in (-3.0, 0.0, 3.0)
+                x = latent_pfwd(dto, [y])
+                xv = x isa AbstractArray ? x[1] : x
+                @test 0.0 < xv <= 4.0
+                @test isapprox(fd_fwd(dto, dt, [y]), logpdf_pfwd(dto, [y]); atol = 1.0e-5)
+            end
+
+            # a map not declared monotone has no cdf
+            dexp = PushforwardDistribution(ExpMap(), StdNormal())
+            @test_throws "not declared monotone" cdf(dexp, 1.0)
+            @test_throws "not declared monotone" minimum(dexp)
         end
     end
 
