@@ -6,10 +6,10 @@
 [![Coverage](https://codecov.io/gh/ptiede/ProbabilityTransports.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/ptiede/ProbabilityTransports.jl)
 
 ProbabilityTransports maps a *latent reference space* onto a target probability
-distribution, so a sampler or optimiser can work in the easy space while you push draws
-back to the distribution you actually care about. It is the engine behind reparameterised
-priors: build the transport once, sample/score in the reference space, transport to the
-model space.
+distribution, so a sampler or optimizer can work in the easy space while you push draws
+back to the distribution you actually care about.
+
+This repository was created with the heavy assistance of an LLM.
 
 
 ## Quick start
