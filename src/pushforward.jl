@@ -7,14 +7,25 @@
 # no data-dependent control flow, allocation-light) as the concrete map.
 
 # ----- ScaleShift: element-wise location-scale `x = μ .+ s .* z` ------------
-# `s` is a scalar (broadcast over `z`) or an array the same shape as `z`. The log
-# absolute Jacobian is `n·log|s|` for a scalar (n = length(z)) or `Σ log|sᵢ|` for
-# an array — this is what makes a per-pixel Gaussian image prior transport exactly.
+# `s` is a scalar (broadcast over `z`) or an array the same shape as `z`, and positive, so
+# the map is increasing. The log absolute Jacobian is `n·log|s|` for a scalar
+# (n = length(z)) or `Σ log|sᵢ|` for an array — this is what makes a per-pixel Gaussian
+# image prior transport exactly.
 
 struct ScaleShift{Tμ, Ts}
     μ::Tμ
     s::Ts
+    function ScaleShift{Tμ, Ts}(μ, s) where {Tμ, Ts}
+        _positive_scale(s) || throw(ArgumentError("ScaleShift scale must be positive, got $s"))
+        return new{Tμ, Ts}(μ, s)
+    end
 end
+ScaleShift(μ, s) = ScaleShift{typeof(μ), typeof(s)}(μ, s)
+
+# Only host values are checked: traced or device scales have no inspectable value.
+_positive_scale(s::Real) = s > 0
+_positive_scale(s::Array{<:Real}) = all(>(0), s)
+_positive_scale(s) = true
 (f::ScaleShift)(z) = f.μ .+ f.s .* z
 
 # inverse of `x = μ .+ s .* z` is `z = (x .- μ) ./ s = (-μ./s) .+ (1 ./s) .* x`

@@ -28,6 +28,17 @@ _val(x) = Float64(Reactant.to_number(x))
         @test _val(cf(Reactant.to_rarray(x0))) ≈ cpu rtol = 1.0f-5
     end
 
+    @testset "WrappedNormal logpdf and StdNormal transport trace" begin
+        d = WrappedNormal([0.3, -2.0, 3.0], [0.5, 2.44, 4.0])
+        x0 = [0.1, -2.5, 2.9]
+        cf = @compile (x -> logpdf(d, x))(Reactant.to_rarray(x0))
+        @test _val(cf(Reactant.to_rarray(x0))) ≈ logpdf(d, x0) rtol = 1.0e-10
+        dto = transport_to(d, StdNormal())
+        y0 = [0.4, -1.3, 2.2]
+        cp = @compile (y -> latent_pfwd(dto, y))(Reactant.to_rarray(y0))
+        @test Array(cp(Reactant.to_rarray(y0))) ≈ latent_pfwd(dto, y0)
+    end
+
     @testset "WrappedUniform logpdf traces" begin
         wu = WrappedUniform(Float32(2π), 3)
         x0 = Float32[0.1, 0.2, 0.3]

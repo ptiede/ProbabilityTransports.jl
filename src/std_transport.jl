@@ -46,18 +46,23 @@ end
 #
 # `_clamp_unit` (defined in transport.jl) keeps the cdf strictly inside (0,1) so
 # `quantile` of an unbounded target stays finite — see the note there.
+#
+# The element dist is built inside the broadcast function, not broadcast as an argument:
+# Reactant cannot trace a broadcast whose arguments are distribution objects.
 function pfwd_step(c::ArrayTransport{<:_ArrayStd}, y, index)
     m = prod(c.dims)
     yv = @view y[index:(index + m - 1)]
+    d, s = c.dist, c.space
     # x = Q_D(F_S(y)), fused so only the output allocates
-    x = quantile.(_elem_dist.(Ref(c.dist), 1:m), _clamp_unit.(space_cdf.(Ref(c.space), yv)))
+    x = ((yi, i) -> quantile(_elem_dist(d, i), _clamp_unit(space_cdf(s, yi)))).(yv, 1:m)
     return reshape(x, c.dims), index + m
 end
 
 function pback_step!(y, index, c::ArrayTransport{<:_ArrayStd}, x)
     m = prod(c.dims)
+    d, s = c.dist, c.space
     # y = Q_S(F_D(x)), fused straight into the latent block
     @views y[index:(index + m - 1)] .=
-        space_quantile.(Ref(c.space), _clamp_unit.(cdf.(_elem_dist.(Ref(c.dist), 1:m), vec(x))))
+        ((xi, i) -> space_quantile(s, _clamp_unit(cdf(_elem_dist(d, i), xi)))).(vec(x), 1:m)
     return index + m
 end
